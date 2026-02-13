@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Title</title>
+  <script src="https://cdn.jsdelivr.net/npm/yjs@13.6.14/dist/yjs.js"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script>
+
+
+
+  </script>
+</head>
+<body>
+<div>
+  <textarea class="abc"></textarea>
+</div>
+
+<script>
+  const ydoc = new Y.Doc();
+  const ytext = ydoc.getText('document'); // 共享文本类型
+
+  // 假设你有一个 textarea 或 CodeMirror / Quill 等编辑器
+  const inputDom = document.querySelector('.abc');
+
+  const socket = io('http://localhost:3892', {
+    path: '/collab'
+  });
+
+  socket.on('connect', () => {
+    console.log('连接成功，ID:', socket.id);
+    socket.emit('message', { text: 'Hello from client!' });
+    socket.emit('join', {docId: 'a8126'})
+
+
+    inputDom.addEventListener('change', (event) => {
+      socket.emit('update', { docId: 'a8126', update: event.target.value })
+      console.log(event.target.value, 'event 出发事件更新');
+    })
+  });
+
+  socket.on('message', (data) => {
+    console.log('收到服务器消息:', data);
+  });
+
+  socket.on('initDoc', (data) => {
+    console.log(data, '监听加入房间成功文档初始化');
+  })
+
+  socket.on('update', (data) => {
+    console.log(data, '更新 update');
+    const {update} = data
+    inputDom.innerHTML = update
+  })
+</script>
+</body>
+</html>
