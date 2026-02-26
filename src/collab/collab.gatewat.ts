@@ -31,8 +31,11 @@ export class CollabGateway
   }
 
   // 链接成功操作
-  handleConnection(client: any, ...args: any[]) {
-    console.log('客户端连接:', client.id);
+  handleConnection(client: any, request: any, ...args: any[]) {
+    const url = new URL(request.url, `http://${request.headers.host}`);
+    const params = url.searchParams; // URLSearchParams 对象
+    const docId = params.get('docId');
+    console.log('客户端连接:', client.id, params);
   }
 
   // 断链操作
