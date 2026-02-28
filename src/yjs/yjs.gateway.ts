@@ -123,7 +123,7 @@ export class YjsCollabGateway
   // 配置：无人连接多少分钟后清理 (毫秒)
   private readonly CLEANUP_DELAY_MS = 30 * 60 * 1000;
 
-  handleConnection(client: any, req: http.IncomingMessage) {
+  async handleConnection(client: any, req: http.IncomingMessage) {
     // 链接
 
     // 1. 从 URL 查询参数中获取 roomId
@@ -144,7 +144,7 @@ export class YjsCollabGateway
 
     this.logger.log(`Client joining room: ${roomId}`);
 
-    const room = this.getRoom(roomId);
+    const room = await this.getRoom(roomId);
 
     // 有人进房间 如果这个房间处于要被清除阶段 取消清除状态
     if (room.cleanupTimer) {
