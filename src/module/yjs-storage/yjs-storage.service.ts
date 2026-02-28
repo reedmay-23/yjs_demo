@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+// import { PrismaService } from '../prisma/prisma.service';
 import * as Y from 'yjs';
 
 @Injectable()
 export class YjsStorageService {
-  constructor(private readonly prisma: PrismaService) {}
+  // private readonly prisma: PrismaService
+  constructor() {}
 
   // 保存快照定时器
   async saveSnapshot(id: string, doc: Y.Doc) {}
