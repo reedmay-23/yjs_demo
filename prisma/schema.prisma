@@ -8,11 +8,13 @@ datasource db {
 }
 
 model User {
-    id        BigInt     @id @default(autoincrement())
-    username  String     @unique @db.VarChar(100) // 用户名
-    createdAt DateTime   @default(now()) @map("created_at")
-    updatedAt DateTime   @updatedAt @map("updated_at")
-    documents Document[] @relation("UserDocuments")
+    id        BigInt                 @id @default(autoincrement())
+    username  String                 @unique @db.VarChar(100) // 用户名
+    createdAt DateTime               @default(now()) @map("created_at")
+    updatedAt DateTime               @updatedAt @map("updated_at")
+    // 关联关系
+    documents Document[]             @relation("UserDocuments")
+    sessions  CollaborationSession[] @relation("UserSessions")
 
     @@map("users")
 }
@@ -27,7 +29,8 @@ model Document {
     version   Int      @default(0) @map("version")
     content   Json     @db.JsonB
 
-    creator User @relation("UserDocuments", fields: [createdBy], references: [id])
+    creator  User                   @relation("UserDocuments", fields: [createdBy], references: [id])
+    sessions CollaborationSession[] @relation("DocumentSessions")
 
     @@map("documents")
 }
@@ -41,13 +44,13 @@ model CollaborationSession {
     lastSeen   DateTime @default(now()) @map("last_seen")
 
     // 关联关系
-    document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-    user     User     @relation(fields: [userId], references: [id])
+    document Document @relation("DocumentSessions", fields: [documentId], references: [id], onDelete: Cascade)
+    user     User     @relation("UserSessions", fields: [userId], references: [id])
 
     @@unique([documentId, userId])
     @@index([documentId])
     @@index([lastSeen])
-    @@map("collaboration_session")
+    @@map("collaboration_sessions")
 }
 
 // model DocumentVersion {
