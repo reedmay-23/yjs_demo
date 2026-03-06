@@ -8,17 +8,50 @@ datasource db {
 }
 
 model User {
-    id    Int     @id @default(autoincrement())
-    email String  @unique
-    name  String?
-    posts Post[]
+    id        BigInt     @id @default(autoincrement())
+    username  String     @unique @db.VarChar(100) // 用户名
+    createdAt DateTime   @default(now()) @map("created_at")
+    updatedAt DateTime   @updatedAt @map("updated_at")
+    documents Document[] @relation("UserDocuments")
+
+    @@map("users")
 }
 
-model Post {
-    id        Int     @id @default(autoincrement())
-    title     String
-    content   String?
-    published Boolean @default(false)
-    author    User    @relation(fields: [authorId], references: [id])
-    authorId  Int
+// 文档主信息
+model Document {
+    id        BigInt   @id @default(autoincrement())
+    title     String   @db.VarChar(255)
+    createdBy BigInt   @map("create_by")
+    createdAt DateTime @default(now()) @map("created_at")
+    updatedAt DateTime @updatedAt @map("updated_at")
+    version   Int      @default(0) @map("version")
+    content   Json     @db.JsonB
+
+    creator User @relation("UserDocuments", fields: [createdBy], references: [id])
+
+    @@map("documents")
 }
+
+model CollaborationSession {
+    id         BigInt   @id @default(autoincrement())
+    documentId BigInt   @map("document_id")
+    userId     BigInt   @map("user_id")
+    cursorPos  Json?    @map("cursor_pos") @db.JsonB // 光标位置
+    isActive   Boolean  @default(true) @map("is_active")
+    lastSeen   DateTime @default(now()) @map("last_seen")
+
+    // 关联关系
+    document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+    user     User     @relation(fields: [userId], references: [id])
+
+    @@unique([documentId, userId])
+    @@index([documentId])
+    @@index([lastSeen])
+    @@map("collaboration_session")
+}
+
+// model DocumentVersion {
+//     documentId BigInt @map("document_id")
+//
+//     document Document @relation(fields: [documentId], references: [id])
+// }
