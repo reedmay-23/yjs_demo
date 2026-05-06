@@ -19,6 +19,8 @@ interface RoomData {
   connectionCount: number; // 房间链接数
   cleanupTimer?: NodeJS.Timeout; // 清除倒计时
   snapshotTimer?: NodeJS.Timeout; // 原有的快照定时器
+  docId: any;
+  roomId: any;
 }
 
 @WebSocketGateway({
@@ -36,7 +38,7 @@ export class YjsCollabGateway
   private readonly logger = new Logger(YjsCollabGateway.name);
 
   // 内存存储文档 (生产环境建议接入 Redis 或 数据库)
-  // Key: roomId, Value: Y.Doc
+  // Key: docId, Value: Y.Doc
   private docs: Map<string, RoomData> = new Map();
   private connections = new Map<string, { docId: string }>();
 
@@ -44,14 +46,30 @@ export class YjsCollabGateway
    * @Author: mayBe
    * @Date: 2026/2/26
    * @Description: 获取房间
-   * @param roomId docId名称
+   * @param docId docId名称
+   * @param userId userId
    * */
-  async getRoom(roomId: string) {
-    // 3.获取doc
-    if (!this.docs.has(roomId)) {
+  async getRoom(docId: any, userId: number) {
+    // 获取doc
+    const storgeDoc = await this.storageService.getDocument(docId);
+    // 如果文档不存在
+    if (!storgeDoc) {
+      this.logger.error('文档不存在，服务其强制用户断开连接');
+      return;
+    }
+    // 文档存在，查看是否存在会话空间
+    const session = await this.storageService.handleSessionRoom(docId, userId);
+
+    // 3.获取doc docs相当于存储的文档的会话
+    // 内存不存在会话 同步数据库会话
+    if (!this.docs.has(docId)) {
+      console.log('文档在内存不存在 创建一个doc实例 同步数据库的会话');
+      const storedUnit8Array = new Uint8Array(storgeDoc.content);
       const doc = new Y.Doc();
       const awareness = new awarenessProtocol.Awareness(doc);
-      console.log('文档不存在 创建一个doc实例');
+
+      // 内存同步 数据库变更
+      Y.applyUpdate(doc, storedUnit8Array);
       // ---------------------------------------------------------
       // 🎯 核心：在这里监听 update 事件，这就是“接收”更改的地方
       // ---------------------------------------------------------
@@ -62,15 +80,15 @@ export class YjsCollabGateway
         //    - 如果是来自 WebSocket 客户端的同步，origin 通常是 undefined 或 'sync'
         //    - 如果是本地加载数据触发的，可能是 'load'
         this.logger.log(
-          `📥 [房间: ${roomId}] 收到更新! 大小: ${update.byteLength} bytes, 来源: ${origin}`,
+          `📥 [房间: ${docId}] 收到更新! 大小: ${update.byteLength} bytes, 来源: ${origin}`,
         );
 
         // --- 在这里执行你的业务逻辑 ---
 
-        // // 1. 持久化到数据库 (防抖处理建议在生产环境加上)
-        // this.saveToDatabase(name, update).catch((err) => {
-        //   this.logger.error('保存失败', err);
-        // });
+        // 1. 持久化到数据库 (防抖处理建议在生产环境加上)
+        this.saveToDatabase(docId, update).catch((err) => {
+          this.logger.error('保存失败', err);
+        });
 
         // 2. 广播给其他服务 (如果需要微服务架构)
         // this.redis.publish(`yjs:${name}`, Buffer.from(update));
@@ -82,8 +100,17 @@ export class YjsCollabGateway
         // this.logger.debug(`当前文档全文: ${currentText.substring(0, 50)}...`);
       });
 
-      // // 从数据库获取是否有历史数据：加载历史数据
-      const res = await this.storageService.getLocalData(roomId);
+      // // 从数据库获取是否有历史数据：加载历史文档数据
+
+      // 查看数据库是否有该doc文档
+      const res = await this.storageService.getLocalData(docId);
+
+      // 如果文档不存在说明 没有这个文档报错
+      if (!res) {
+        this.logger.error(`查询的这个文档不存在 断开用户连接`, docId);
+        throw '文档不存在';
+      }
+
       // this.loadFromDatabase(name).then((data) => {
       //   if (data) {
       //     Y.applyUpdate(doc, data);
@@ -91,27 +118,29 @@ export class YjsCollabGateway
       //   }
       // });
 
-      // 启动定期快照 (例如每5分钟)
-      const snapshotTimer = setInterval(
-        () => {
-          // 调用存储服务 将doc实例存储到本地
-          this.storageService
-            .saveSnapshot(roomId, doc)
-            .catch((err) => this.logger.error(`快照失败 ${roomId}`, err));
-        },
-        5 * 60 * 1000,
-      );
+      // // 启动定期快照 (例如每5分钟)
+      // const snapshotTimer = setInterval(
+      //   () => {
+      //     // 调用存储服务 将doc实例存储到本地
+      //     this.storageService
+      //       .saveSnapshot(docId, doc)
+      //       .catch((err) => this.logger.error(`快照失败 ${docId}`, err));
+      //   },
+      //   5 * 60 * 1000,
+      // );
 
-      this.docs.set(roomId, {
+      this.docs.set(session.id, {
+        docId,
         doc,
         awareness,
         connectionCount: 0,
         cleanupTimer: undefined,
+        roomId: session.id,
         // snapshotTimer,
       });
-      this.logger.log(`创建新房间: ${roomId}`);
+      this.logger.log(`创建新文档:房间号 ${session.id}`);
     }
-    return this.docs.get(roomId)!;
+    return this.docs.get(session.id)!;
   }
   /**-------------------------  获取房间 End -------------------------*/
 
@@ -126,34 +155,34 @@ export class YjsCollabGateway
   async handleConnection(client: any, req: http.IncomingMessage) {
     // 链接
 
-    // 1. 从 URL 查询参数中获取 roomId
-    // 前端连接示例: ws://localhost:3000/collab?roomId=room-123
+    // 1. 从 URL 查询参数中获取 docId
+    // 前端连接示例: ws://localhost:3000/collab?docId=room-123
     const params = urlParamsHandle(req);
-    const roomId = params.get('docId');
+    const docId = params.get('docId');
     const userId = params.get('userId');
-    this.logger.log(`Client connected 客户端连接：${roomId} ${userId}`);
+    this.logger.log(`Client connected 客户端连接：${docId} ${userId}`);
 
-    if (!roomId) {
-      this.logger.warn('Connection rejected: Missing roomId');
-      client.close(4000, 'Missing roomId parameter');
+    // 传参没有docId 文档
+    if (!docId) {
+      this.logger.warn('Connection rejected: Missing docId');
+      client.close(4000, 'Missing docId parameter');
       return;
     }
 
-    // const { doc, awareness } = this.getRoom(roomId);
-    // let clientID: number | null = null;
+    // 文档操作 doc不存在直接推出 存在返回roomId
+    // const roomId = await this.handleDocument(docId, client, userId);
+    // this.logger.log(`Client joining room: ${roomId}`);
 
-    this.logger.log(`Client joining room: ${roomId}`);
-
-    const room = await this.getRoom(roomId);
+    const room = await this.getRoom(docId, userId);
 
     // 有人进房间 如果这个房间处于要被清除阶段 取消清除状态
     if (room.cleanupTimer) {
       clearTimeout(room.cleanupTimer);
       room.cleanupTimer = undefined;
-      this.logger.log(`♻️ 房间 ${roomId} 恢复活跃，取消清理计划`);
+      this.logger.log(`♻️ 房间 ${room.roomId} 恢复活跃，取消清理计划`);
     }
 
-    client.roomId = roomId;
+    client.roomId = docId;
     room.connectionCount++;
 
     // 4. 【核心】将 WebSocket 连接交给 y-websocket 处理
@@ -162,13 +191,13 @@ export class YjsCollabGateway
     // - Awareness Protocol (同步光标/状态)
     // - 二进制消息编解码
     setupWSConnection(client, req, {
-      docName: roomId,
+      docName: room.roomId,
       doc: room.doc,
       awareness: room.awareness,
       gc: true, // 可选：启用垃圾回收
     });
 
-    this.logger.log(`Yjs protocol established for room: ${roomId}`);
+    this.logger.log(`Yjs protocol established for room: ${room.roomId}`);
   }
   handleDisconnect(client: any): any {
     console.log('客户端断开连接:', client.roomId);
@@ -198,4 +227,60 @@ export class YjsCollabGateway
       }, this.CLEANUP_DELAY_MS);
     }
   }
+
+  /**
+   * @Author: mayBe
+   * @Date: 2026/3/25
+   * @Description: 文档操作
+   * */
+  async handleDocument(docId: any, client: any, userId: any) {
+    // 检查数据库看是否存在这个文档
+    const res = await this.storageService.getDocument(docId);
+    // 如果文档不存在
+    if (!res) {
+      this.logger.error('文档不存在，服务其强制用户断开连接');
+      return;
+    }
+    // 文档存在，查看是否存在会话空间
+    const session = await this.storageService.handleSessionRoom(docId, userId);
+    return session.id;
+  }
+  /**-------------------------  文档操作 End -------------------------*/
+
+  /**
+   * @Author: mayBe
+   * @Date: 2026/3/25
+   * @Description: 存储数据到数据库
+   * */
+  async saveToDatabase(docId: string, update: Uint8Array): Promise<void> {
+    try {
+      // 将 Uint8Array 转换为 Buffer 以便存储到数据库
+      const updateBuffer = Buffer.from(update);
+
+      // 使用 upsert 操作：
+      // - 如果记录存在 (where 条件匹配)，则更新 content 和 updatedAt 字段
+      // - 如果记录不存在，则创建新记录
+      // await this.prisma.ydocStorage.upsert({
+      //   where: {
+      //     docId: docId, // 假设 docId 是 YDocStorage 表的唯一索引
+      //   },
+      //   update: {
+      //     content: updateBuffer, // 更新文档内容
+      //     updatedAt: new Date(), // 更新时间戳
+      //   },
+      //   create: {
+      //     docId: docId, // 创建新记录
+      //     content: updateBuffer,
+      //     createdAt: new Date(),
+      //     updatedAt: new Date(),
+      //   },
+      // });
+
+      console.log(`文档 ${docId} 已成功保存到数据库。`);
+    } catch (error) {
+      console.error(`保存文档 ${docId} 到数据库失败:`, error);
+      throw error; // 重新抛出错误，让调用方处理
+    }
+  }
+  /**-------------------------  存储数据到数据库 End -------------------------*/
 }

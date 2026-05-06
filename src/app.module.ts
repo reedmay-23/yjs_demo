@@ -5,10 +5,11 @@ import { SocketGateway } from './socket/socket.gateway';
 import { CollabGateway } from './collab/collab.gatewat';
 import { YjsCollabGateway } from './yjs/yjs.gateway';
 import { YjsStorageService } from './module/yjs-storage/yjs-storage.service';
+import { PrismaModule } from './module/prisma/prisma.module';
 // import { PrismaService } from './module/prisma/prisma.service';
 
 @Module({
-  imports: [],
+  imports: [PrismaModule],
   controllers: [AppController],
   providers: [
     AppService,
