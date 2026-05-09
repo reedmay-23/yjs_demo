@@ -4,20 +4,19 @@ import { AppService } from './app.service';
 import { SocketGateway } from './socket/socket.gateway';
 import { CollabGateway } from './collab/collab.gatewat';
 import { YjsCollabGateway } from './yjs/yjs.gateway';
-import { YjsStorageService } from './module/yjs-storage/yjs-storage.service';
+import { YjsPersistenceGateway } from './yjs/yjs-persistence.gateway';
 import { PrismaModule } from './module/prisma/prisma.module';
-// import { PrismaService } from './module/prisma/prisma.service';
+import { StorageModule } from './module/yjs-storage/yjs-storage.module';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, StorageModule],
   controllers: [AppController],
   providers: [
     AppService,
     SocketGateway,
     CollabGateway,
     YjsCollabGateway,
-    YjsStorageService,
+    YjsPersistenceGateway,
   ],
-  // PrismaService,
 })
 export class AppModule {}

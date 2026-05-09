@@ -1,4 +1,4 @@
-import { Controller, Post, Req } from '@nestjs/common';
+import { Body, Controller, Post } from '@nestjs/common';
 import { YjsStorageService } from './yjs-storage.service';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 
@@ -9,8 +9,7 @@ export class YjsStorageController {
 
   @Post('/create')
   @ApiOperation({ summary: '创建文档实例' })
-  createDoc(@Req() req: any) {
-    const { doc } = req;
-    return this.yjsService.createDocument(doc);
+  createDoc(@Body() doc: any) {
+    return this.yjsService.createDocument(doc ?? {});
   }
 }

@@ -1,81 +1,234 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { Injectable, Logger } from '@nestjs/common';
 import * as Y from 'yjs';
+import { PrismaService } from '../prisma/prisma.service';
+
+type StoredYDocState =
+  | number[]
+  | {
+      update?: number[];
+      state?: number[];
+    }
+  | null;
+
+type CreateDocumentInput = {
+  id?: number | string;
+  title?: string;
+  createdBy?: number | string;
+  content?: number[];
+};
 
 @Injectable()
 export class YjsStorageService {
-  // private readonly prisma: PrismaService
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(YjsStorageService.name);
 
-  // 保存快照定时器
-  async saveSnapshot(id: string, doc: Y.Doc) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  // 读取本地数据
-  /**
-   *
-   * @param id 文档id
-   */
-  async getLocalData(id: any): Promise<any> {
-    console.log(id, 'id');
-    // this.prisma.user.findMany({});
-    const res = await this.prisma.document.findUnique({
-      where: {
-        id,
+  normalizeId(id: number | string): number {
+    // WebSocket 和 HTTP 参数大多是字符串，这里统一收敛成数据库使用的数字主键。
+    const normalized =
+      typeof id === 'number'
+        ? id
+        : /^-?\d+$/.test(id.trim())
+          ? Number(id.trim())
+          : Number.NaN;
+
+    if (!Number.isSafeInteger(normalized)) {
+      throw new Error(`Invalid numeric id: ${id}`);
+    }
+
+    return normalized;
+  }
+
+  createEmptyState(): number[] {
+    // 新文档默认保存一份空白 Y.Doc 的完整状态，便于后续统一恢复流程。
+    return Array.from(Y.encodeStateAsUpdate(new Y.Doc()));
+  }
+
+  decodeState(content: StoredYDocState): Uint8Array | null {
+    if (!content) {
+      return null;
+    }
+
+    if (Array.isArray(content)) {
+      return Uint8Array.from(content);
+    }
+
+    const update = content.update ?? content.state;
+    if (!update || !Array.isArray(update)) {
+      return null;
+    }
+
+    return Uint8Array.from(update);
+  }
+
+  encodeState(doc: Y.Doc): number[] {
+    // Prisma 当前字段是 JsonB，所以把二进制状态转成 number[] 再持久化。
+    return Array.from(Y.encodeStateAsUpdate(doc));
+  }
+
+  async saveSnapshot(id: number | string, doc: Y.Doc) {
+    const documentId = this.normalizeId(id);
+    // 每次保存都重新编码整份状态，确保数据库快照可直接恢复出完整文档。
+    const content = this.encodeState(doc);
+
+    this.logger.log(
+      `Saving snapshot for doc=${documentId}, bytes=${content.length}`,
+    );
+
+    const document = await this.prisma.document.update({
+      where: { id: documentId },
+      data: {
+        content,
+        version: {
+          increment: 1,
+        },
       },
     });
-    console.log(res, '看看是否存在, 本地不存在创建一个文档信息');
-    return res;
+
+    this.logger.log(
+      `Saved snapshot for doc=${documentId}, version=${document.version}`,
+    );
+
+    return document;
   }
 
-  async getDocument(id: any): Promise<any> {
-    return await this.prisma.document.findUnique({
+  async getLocalData(id: number | string) {
+    return this.getDocument(id);
+  }
+
+  async getDocument(id: number | string) {
+    const documentId = this.normalizeId(id);
+    const document = await this.prisma.document.findUnique({
       where: {
-        id,
+        id: documentId,
       },
     });
-  }
-  // 创建一个文档
-  async createDocument(doc: any): Promise<any> {
-    // await this.prisma.document.create({});
+
+    this.logger.debug(
+      `Loaded document doc=${documentId}, found=${document ? 'yes' : 'no'}`,
+    );
+
+    return document;
   }
 
-  // 获取会话房间
-  async getSessionInfo(docId: any): Promise<any> {
+  async getDocumentUpdate(id: number | string): Promise<Uint8Array | null> {
+    const document = await this.getDocument(id);
+    if (!document) {
+      return null;
+    }
+
+    // 从 JsonB 中取出 number[] 后再还原成 Yjs 可消费的 Uint8Array。
+    return this.decodeState(document.content as StoredYDocState);
+  }
+
+  async createDocument(input: CreateDocumentInput) {
+    // 未传内容时自动创建一份空白 Yjs 状态，避免后续首次加载时无快照可恢复。
+    const content = input.content ?? this.createEmptyState();
+
+    const document = await this.prisma.document.create({
+      data: {
+        ...(input.id ? { id: this.normalizeId(input.id) } : {}),
+        title: input.title?.trim() || 'Untitled document',
+        createdBy: this.normalizeId(input.createdBy ?? 1),
+        content,
+      },
+    });
+
+    this.logger.log(
+      `Created document doc=${document.id}, title="${document.title}", createdBy=${document.createdBy}`,
+    );
+
+    return document;
+  }
+
+  async getSessionInfo(docId: number | string) {
     const res = await this.prisma.collaborationSession.findFirst({
       where: {
-        documentId: docId,
+        documentId: this.normalizeId(docId),
+      },
+      orderBy: {
+        lastSeen: 'desc',
       },
     });
+
     return res?.id;
   }
-  // 创建会话
-  async createSessionRoom(docId: any, userId: any): Promise<any> {
-    const res = await this.prisma.collaborationSession.create({
+
+  async createSessionRoom(docId: number | string, userId: number | string) {
+    return this.prisma.collaborationSession.create({
       data: {
-        documentId: docId,
-        userId: userId,
+        documentId: this.normalizeId(docId),
+        userId: this.normalizeId(userId),
       },
     });
-    return res;
   }
-  // 会话房间相关逻辑
-  async handleSessionRoom(docId: any, userId: any): Promise<any> {
+
+  async handleSessionRoom(docId: number | string, userId: number | string) {
+    const documentId = this.normalizeId(docId);
+    const normalizedUserId = this.normalizeId(userId);
+
+    this.logger.log(
+      `Upserting collaboration session doc=${documentId}, user=${normalizedUserId}`,
+    );
+
+    // 用 upsert 保证“进入房间”这个动作具备幂等性：重复进入只刷新在线状态。
     const session = await this.prisma.collaborationSession.upsert({
       where: {
         documentId_userId: {
-          documentId: docId,
-          userId: userId,
+          documentId,
+          userId: normalizedUserId,
         },
       },
-      update: {},
+      update: {
+        isActive: true,
+        lastSeen: new Date(),
+      },
       create: {
-        documentId: docId,
-        userId,
+        documentId,
+        userId: normalizedUserId,
+        isActive: true,
+        lastSeen: new Date(),
       },
     });
+
+    this.logger.log(
+      `Session ready id=${session.id}, doc=${documentId}, user=${normalizedUserId}, active=${session.isActive}`,
+    );
+
     return session;
   }
 
-  // 存储本地数据
-  setLocalData(data: any) {}
+  async markSessionDisconnected(
+    docId: number | string,
+    userId: number | string,
+  ) {
+    const documentId = this.normalizeId(docId);
+    const normalizedUserId = this.normalizeId(userId);
+
+    // 断开连接时不删会话，只更新在线状态和最后活跃时间。
+    this.logger.log(
+      `Marking session disconnected doc=${documentId}, user=${normalizedUserId}`,
+    );
+
+    const result = await this.prisma.collaborationSession.updateMany({
+      where: {
+        documentId,
+        userId: normalizedUserId,
+      },
+      data: {
+        isActive: false,
+        lastSeen: new Date(),
+      },
+    });
+
+    this.logger.log(
+      `Marked disconnected doc=${documentId}, user=${normalizedUserId}, updated=${result.count}`,
+    );
+
+    return result;
+  }
+
+  async setLocalData(id: number | string, doc: Y.Doc) {
+    return this.saveSnapshot(id, doc);
+  }
 }
