@@ -10,6 +10,9 @@ datasource db {
 model User {
     id        Int                    @id @default(autoincrement())
     username  String                 @unique @db.VarChar(100) // 用户名
+    account   String                 @db.VarChar(100)
+    password  String                 @default("") @db.VarChar(100) // 密码
+    token     String                 @default("") @db.VarChar(100) // token认证
     createdAt DateTime               @default(now()) @map("created_at")
     updatedAt DateTime               @updatedAt @map("updated_at")
     // 关联关系

@@ -7,9 +7,12 @@ import { YjsCollabGateway } from './yjs/yjs.gateway';
 import { YjsPersistenceGateway } from './yjs/yjs-persistence.gateway';
 import { PrismaModule } from './module/prisma/prisma.module';
 import { StorageModule } from './module/yjs-storage/yjs-storage.module';
+import { AuthModule } from './module/auth/auth.module';
+import { APP_GUARD } from '@nestjs/core';
+import { JwtAuthGuard } from './utils/jwt.config';
 
 @Module({
-  imports: [PrismaModule, StorageModule],
+  imports: [PrismaModule, StorageModule, AuthModule],
   controllers: [AppController],
   providers: [
     AppService,
@@ -17,6 +20,10 @@ import { StorageModule } from './module/yjs-storage/yjs-storage.module';
     CollabGateway,
     YjsCollabGateway,
     YjsPersistenceGateway,
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
   ],
 })
 export class AppModule {}
