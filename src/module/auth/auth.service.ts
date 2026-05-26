@@ -1,8 +1,14 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAuthDto } from './create-auth.dto';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class AuthService {
@@ -17,13 +23,34 @@ export class AuthService {
   async registered(body: CreateAuthDto) {
     const { account, password } = body;
     this.logger.log('进行用户注册功能');
-    return this.prisma.user.create({
-      data: {
+    const existed = await this.prisma.user.findFirst({
+      where: {
         account,
-        password,
-        username: account,
       },
+      select: { id: true, username: true },
     });
+    if (existed) {
+      throw new ConflictException('用户已存在');
+    }
+    try {
+      const user = this.prisma.user.create({
+        data: {
+          account,
+          password,
+          username: account,
+        },
+      });
+      return user;
+    } catch (error) {
+      // 并发场景下，先查也不够，最终还是靠唯一约束
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('用户已存在');
+      }
+      throw error;
+    }
   }
 
   // 登录

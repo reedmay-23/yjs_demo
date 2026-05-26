@@ -10,7 +10,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Public()
-  @Post()
+  @Post('register')
   @ApiOperation({
     summary: '注册用户',
     description: '用于注册用户',
@@ -21,7 +21,7 @@ export class AuthController {
   }
 
   @Public()
-  @Post()
+  @Post('login')
   @ApiOperation({
     summary: '登录',
     description: '用户登录',
