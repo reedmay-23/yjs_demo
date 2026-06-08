@@ -1,89 +1,126 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import * as bcrypt from 'bcrypt';
+import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAuthDto } from './create-auth.dto';
-import * as bcrypt from 'bcrypt';
-import { JwtService } from '@nestjs/jwt';
-import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class AuthService {
-  private logger = new Logger(AuthService.name);
+  private readonly logger = new Logger(AuthService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
   ) {}
 
-  // 注册
   async registered(body: CreateAuthDto) {
     const { account, password } = body;
-    this.logger.log('进行用户注册功能');
+    this.logger.log('Register user');
+
     const existed = await this.prisma.user.findFirst({
-      where: {
-        account,
-      },
-      select: { id: true, username: true },
+      where: { account },
+      select: { id: true },
     });
+
     if (existed) {
       throw new ConflictException('用户已存在');
     }
+
     try {
-      const user = this.prisma.user.create({
+      return await this.prisma.user.create({
         data: {
           account,
           password,
           username: account,
         },
       });
-      return user;
     } catch (error) {
-      // 并发场景下，先查也不够，最终还是靠唯一约束
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
         throw new ConflictException('用户已存在');
       }
+
       throw error;
     }
   }
 
-  // 登录
-  async login(body: CreateAuthDto) {
-    const { account, password } = body;
+  async getTokens(userId: number) {
+    const payload = { sub: userId };
 
-    this.logger.log('进行用户登录功能');
-    const user = await this.prisma.user.findFirst({
-      where: {
-        account,
-      },
+    const accessToken = await this.jwtService.signAsync(payload, {
+      secret: process.env.JWT_ACCESS_SECRET,
+      expiresIn: '15m',
     });
 
-    // if(!user) return throw new UnauthorizedException('用户不存在')
+    const refreshToken = await this.jwtService.signAsync(payload, {
+      secret: process.env.JWT_REFRESH_SECRET,
+      expiresIn: '7d',
+    });
 
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    return {
+      accessToken,
+      refreshToken,
+    };
+  }
+
+  async updateRefreshToken(id: any, refreshToken: string) {
+    return this.prisma.user.update({
+      where: { id },
+      data: { refreshToken },
+    });
+  }
+
+  async refresh(id: any, refreshToken: string) {
+    // 查询用户的 refreshToken
+    const userRT = await this.prisma.user.findUnique({
+      where: {
+        id,
+      },
+      select: {
+        id: true,
+        refreshToken: true,
+      },
+    });
+    // const tokenState = bcrypt.compareSync(userRT.refreshToken, refreshToken);
+    const tokenState = refreshToken === userRT.refreshToken;
+    if (!tokenState) {
+      throw new ForbiddenException('refreshToken 过期或无效');
+    }
+
+    const tokens = await this.getTokens(id);
+    await this.updateRefreshToken(id, tokens.refreshToken);
+    return tokens;
+  }
+
+  async login(body: CreateAuthDto) {
+    const { account, password } = body;
+    this.logger.log('Login user');
+
+    const user = await this.prisma.user.findFirst({
+      where: { account },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('账号或密码错误');
+    }
+
+    const isPasswordValid = password === user.password;
     if (!isPasswordValid) {
       throw new UnauthorizedException('账号或密码错误');
     }
 
-    const payload = {
-      sub: user.id,
-      username: user.username,
-    };
+    const tokens = await this.getTokens(user.id);
+    await this.updateRefreshToken(user.id, tokens.refreshToken);
 
-    const token = await this.jwtService.signAsync(payload);
-    return this.prisma.user.update({
-      where: {
-        id: user.id,
-      },
-      data: {
-        token,
-      },
-    });
+    return tokens;
   }
 }

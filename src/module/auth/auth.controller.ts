@@ -1,8 +1,17 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Request } from 'express';
+import { Public } from '../../decorator/public.decorator';
+import { RefreshTokenGuard } from '../jwt/refresh-token.guard';
 import { CreateAuthDto } from './create-auth.dto';
 import { AuthService } from './auth.service';
-import { Public } from '../../decorator/public.decorator';
+
+type RefreshRequest = Request & {
+  user: {
+    userId: number;
+    refreshToken: string;
+  };
+};
 
 @ApiTags('账户相关')
 @Controller('auth')
@@ -16,7 +25,6 @@ export class AuthController {
     description: '用于注册用户',
   })
   authRegister(@Body() body: CreateAuthDto) {
-    // const { account, password } = body;
     return this.authService.registered(body);
   }
 
@@ -28,5 +36,17 @@ export class AuthController {
   })
   authLogin(@Body() body: CreateAuthDto) {
     return this.authService.login(body);
+  }
+
+  @Public()
+  @UseGuards(RefreshTokenGuard)
+  @Post('refresh')
+  @ApiOperation({
+    summary: '刷新 token',
+    description: '使用 refresh token 刷新 access token 和 refresh token',
+  })
+  refresh(@Req() req: RefreshRequest) {
+    console.log(req, 'kankan 返回怎么过来的');
+    return this.authService.refresh(req.user.userId, req.user.refreshToken);
   }
 }

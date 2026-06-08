@@ -1,4 +1,3 @@
-// export default reagistersAs('jwt');
 import {
   CanActivate,
   ExecutionContext,
@@ -38,7 +37,9 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     try {
-      const payload = await this.jwtService.verifyAsync(token);
+      const payload = await this.jwtService.verifyAsync(token, {
+        secret: process.env.JWT_ACCESS_SECRET,
+      });
       request.user = payload as Record<string, unknown>;
     } catch {
       throw new UnauthorizedException('登录已过期或 token 无效');
