@@ -1,17 +1,20 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { createSuccessResponse } from '../../common/utils/api-response.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { YjsStorageService } from '../yjs-storage/yjs-storage.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
-import { UpdateDocumentDto } from './dto/update-document.dto';
 
 @Injectable()
 export class DocumentService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly yjsStorageService: YjsStorageService,
+  ) {}
 
-  async create(createDocumentDto: CreateDocumentDto) {
-    const { id, title } = createDocumentDto;
+  async create(userId: number, createDocumentDto: CreateDocumentDto) {
+    const { title } = createDocumentDto;
     const user = await this.prisma.user.findUnique({
-      where: { id },
+      where: { id: userId },
       select: { id: true },
     });
 
@@ -21,9 +24,9 @@ export class DocumentService {
 
     const res = await this.prisma.document.create({
       data: {
-        content: '',
-        createdBy: id,
-        title,
+        content: this.yjsStorageService.createEmptyState(),
+        createdBy: userId,
+        title: title?.trim() || 'Untitled document',
       },
       include: {
         creator: true,
@@ -35,10 +38,13 @@ export class DocumentService {
     });
   }
 
-  async getList(id: number) {
+  async getList(userId: number) {
     const res = await this.prisma.document.findMany({
       where: {
-        createdBy: id,
+        createdBy: userId,
+      },
+      orderBy: {
+        updatedAt: 'desc',
       },
     });
 
@@ -47,16 +53,33 @@ export class DocumentService {
     });
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} document`;
-  }
+  async remove(userId: number, id: number | string) {
+    const documentId = this.yjsStorageService.normalizeId(id);
+    const document = await this.prisma.document.findUnique({
+      where: { id: documentId },
+      select: {
+        id: true,
+        createdBy: true,
+      },
+    });
 
-  update(id: number, updateDocumentDto: UpdateDocumentDto) {
-    void updateDocumentDto;
-    return `This action updates a #${id} document`;
-  }
+    if (!document) {
+      throw new NotFoundException('文档不存在');
+    }
 
-  remove(id: number) {
-    return `This action removes a #${id} document`;
+    // 关键校验：只允许文档创建者删除自己的文档。
+    if (document.createdBy !== userId) {
+      throw new ForbiddenException('无权限删除该文档');
+    }
+
+    const res = await this.prisma.document.delete({
+      where: {
+        id: documentId,
+      },
+    });
+
+    return createSuccessResponse(res, {
+      message: '删除文档成功',
+    });
   }
 }

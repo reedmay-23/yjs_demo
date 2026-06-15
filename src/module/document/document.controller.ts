@@ -1,16 +1,14 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Req } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiParam } from '@nestjs/swagger';
+import { Request } from 'express';
 import { DocumentService } from './document.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
-import { UpdateDocumentDto } from './dto/update-document.dto';
-import { ApiBearerAuth, ApiOperation, ApiParam } from '@nestjs/swagger';
+
+type TokenRequest = Request & {
+  user: {
+    sub: number;
+  };
+};
 
 @ApiBearerAuth('access-token')
 @Controller('document')
@@ -21,34 +19,24 @@ export class DocumentController {
   @ApiOperation({
     summary: '创建文档',
   })
-  create(@Body() createDocumentDto: CreateDocumentDto) {
-    return this.documentService.create(createDocumentDto);
+  create(@Req() req: TokenRequest, @Body() createDocumentDto: CreateDocumentDto) {
+    return this.documentService.create(req.user.sub, createDocumentDto);
   }
 
-  @Post('/getList')
+  @Get('/getList')
   @ApiOperation({
     summary: '获取文档列表',
   })
-  @ApiParam({ name: 'id', type: Number, description: '用户ID', example: 1 })
-  findAll(@Param() params: { id: number }) {
-    return this.documentService.getList(params.id);
+  findAll(@Req() req: TokenRequest) {
+    return this.documentService.getList(req.user.sub);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.documentService.findOne(+id);
-  }
-
-  @Patch(':id')
-  update(
-    @Param('id') id: string,
-    @Body() updateDocumentDto: UpdateDocumentDto,
-  ) {
-    return this.documentService.update(+id, updateDocumentDto);
-  }
-
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.documentService.remove(+id);
+  @Delete('/delete/:id')
+  @ApiOperation({
+    summary: '删除文档',
+  })
+  @ApiParam({ name: 'id', type: Number, description: '文档ID', example: 1 })
+  remove(@Req() req: TokenRequest, @Param('id') id: string) {
+    return this.documentService.remove(req.user.sub, id);
   }
 }
