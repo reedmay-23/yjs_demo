@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { CollabGateway } from './collab/collab.gatewat';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { AuthModule } from './module/auth/auth.module';
@@ -19,7 +18,6 @@ import { YjsCollabGateway } from './yjs/yjs.gateway';
   providers: [
     AppService,
     SocketGateway,
-    CollabGateway,
     YjsCollabGateway,
     YjsPersistenceGateway,
     {

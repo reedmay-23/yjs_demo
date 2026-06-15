@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import {
   OnGatewayConnection,
   OnGatewayDisconnect,
@@ -9,6 +10,7 @@ import * as Y from 'yjs';
 import { WebSocket } from 'ws';
 import { YjsStorageService } from '../module/yjs-storage/yjs-storage.service';
 import { urlParamsHandle } from '../utils/urlParams';
+import { verifyWsAccessToken } from '../utils/ws-auth';
 
 const yWebsocketUtils = require('y-websocket/bin/utils');
 const setupWSConnection = yWebsocketUtils.setupWSConnection;
@@ -31,7 +33,10 @@ export class YjsPersistenceGateway
   private readonly PERSIST_DEBOUNCE_MS = 1000;
   private readonly persistTimers = new Map<string, NodeJS.Timeout>();
 
-  constructor(private readonly storageService: YjsStorageService) {
+  constructor(
+    private readonly storageService: YjsStorageService,
+    private readonly jwtService: JwtService,
+  ) {
     if (!getPersistence()) {
       setPersistence({
         bindState: async (docName: string, doc: Y.Doc) => {
@@ -95,6 +100,19 @@ export class YjsPersistenceGateway
 
   private getCloseReason(error: unknown) {
     if (error instanceof Error) {
+      if (
+        error.message.includes('missing_access_token') ||
+        error.message.includes('jwt expired') ||
+        error.message.includes('invalid token') ||
+        error.message.includes('invalid signature')
+      ) {
+        return 'unauthorized';
+      }
+
+      if (error.message.includes('无权限')) {
+        return 'forbidden';
+      }
+
       if (error.message.includes('does not exist')) {
         return 'document_not_found';
       }
@@ -125,10 +143,9 @@ export class YjsPersistenceGateway
   async handleConnection(client: RoomSocket, req: http.IncomingMessage) {
     const params = urlParamsHandle(req);
     const docId = params.get('docId');
-    const userId = params.get('userId');
 
     this.logger.log(
-      `Incoming /collab2 connection docId=${docId ?? 'missing'}, userId=${userId ?? 'missing'}`,
+      `Incoming /collab2 connection docId=${docId ?? 'missing'}`,
     );
 
     if (!docId) {
@@ -137,6 +154,9 @@ export class YjsPersistenceGateway
     }
 
     try {
+      // 关键鉴权：协同连接只认 access token，前端不再传 userId。
+      const payload = await verifyWsAccessToken(this.jwtService, req);
+      const userId = payload.sub.toString();
       const docKey = this.getDocKey(docId);
       const document = await this.storageService.getDocument(docKey);
 
@@ -144,10 +164,12 @@ export class YjsPersistenceGateway
         throw new Error(`Document ${docKey} does not exist`);
       }
 
+      // 关键校验：进入 y-websocket 前确认用户有文档权限。
+      await this.storageService.validateDocumentAccess(docKey, userId);
       await this.ensureSessionTracked(docKey, userId);
 
       client.roomId = docKey;
-      client.userId = userId ?? undefined;
+      client.userId = userId;
 
       setupWSConnection(client, req, {
         docName: docKey,

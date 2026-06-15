@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import {
   OnGatewayConnection,
   OnGatewayDisconnect,
@@ -11,6 +12,7 @@ import * as Y from 'yjs';
 import { Server, WebSocket } from 'ws';
 import { YjsStorageService } from '../module/yjs-storage/yjs-storage.service';
 import { urlParamsHandle } from '../utils/urlParams';
+import { verifyWsAccessToken } from '../utils/ws-auth';
 
 const syncProtocol = require('y-protocols/dist/sync.cjs');
 const encoding = require('lib0/dist/encoding.cjs');
@@ -46,7 +48,10 @@ export class YjsCollabGateway
   private readonly CLEANUP_DELAY_MS = 30 * 60 * 1000;
   private readonly PERSIST_DEBOUNCE_MS = 1000;
 
-  constructor(private readonly storageService: YjsStorageService) {}
+  constructor(
+    private readonly storageService: YjsStorageService,
+    private readonly jwtService: JwtService,
+  ) {}
 
   @WebSocketServer()
   server: Server;
@@ -57,6 +62,19 @@ export class YjsCollabGateway
 
   private getCloseReason(error: unknown) {
     if (error instanceof Error) {
+      if (
+        error.message.includes('missing_access_token') ||
+        error.message.includes('jwt expired') ||
+        error.message.includes('invalid token') ||
+        error.message.includes('invalid signature')
+      ) {
+        return 'unauthorized';
+      }
+
+      if (error.message.includes('无权限')) {
+        return 'forbidden';
+      }
+
       if (error.message.includes('does not exist')) {
         return 'document_not_found';
       }
@@ -257,6 +275,8 @@ export class YjsCollabGateway
       throw new Error(`Document ${docKey} does not exist`);
     }
 
+    // 关键校验：进入协同房间前先确认 token 用户有该文档权限。
+    await this.storageService.validateDocumentAccess(docKey, userId);
     await this.ensureSessionTracked(docKey, userId);
 
     const cachedRoom = this.rooms.get(docKey);
@@ -351,10 +371,9 @@ export class YjsCollabGateway
   async handleConnection(client: RoomSocket, req: http.IncomingMessage) {
     const params = urlParamsHandle(req);
     const docId = params.get('docId');
-    const userId = params.get('userId');
 
     this.logger.log(
-      `Incoming websocket connection docId=${docId ?? 'missing'}, userId=${userId ?? 'missing'}`,
+      `Incoming websocket connection docId=${docId ?? 'missing'}`,
     );
 
     if (!docId) {
@@ -363,13 +382,12 @@ export class YjsCollabGateway
       return;
     }
 
-    if (!userId) {
-      this.logger.warn(`Connection rejected for doc ${docId}: Missing userId`);
-      client.close(4001, 'Missing userId parameter');
-      return;
-    }
+    let userId: string | undefined;
 
     try {
+      // 关键鉴权：协同连接不信任 query.userId，只使用 access token 里的用户身份。
+      const payload = await verifyWsAccessToken(this.jwtService, req);
+      userId = payload.sub.toString();
       const room = await this.getRoom(docId, userId);
 
       if (room.cleanupTimer) {
