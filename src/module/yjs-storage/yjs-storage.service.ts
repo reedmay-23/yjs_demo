@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import * as Y from 'yjs';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -124,12 +124,21 @@ export class YjsStorageService {
   async createDocument(input: CreateDocumentInput) {
     // 未传内容时自动创建一份空白 Yjs 状态，避免后续首次加载时无快照可恢复。
     const content = input.content ?? this.createEmptyState();
+    const createdBy = this.normalizeId(input.createdBy ?? 1);
+    const user = await this.prisma.user.findUnique({
+      where: { id: createdBy },
+      select: { id: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('用户不存在，无法创建文档');
+    }
 
     const document = await this.prisma.document.create({
       data: {
         ...(input.id ? { id: this.normalizeId(input.id) } : {}),
         title: input.title?.trim() || 'Untitled document',
-        createdBy: this.normalizeId(input.createdBy ?? 1),
+        createdBy,
         content,
       },
     });
@@ -137,6 +146,29 @@ export class YjsStorageService {
     this.logger.log(
       `Created document doc=${document.id}, title="${document.title}", createdBy=${document.createdBy}`,
     );
+
+    return document;
+  }
+
+  async validateDocumentAccess(docId: number | string, userId: number | string) {
+    const documentId = this.normalizeId(docId);
+    const normalizedUserId = this.normalizeId(userId);
+    const document = await this.prisma.document.findUnique({
+      where: { id: documentId },
+      select: {
+        id: true,
+        createdBy: true,
+      },
+    });
+
+    if (!document) {
+      throw new NotFoundException('文档不存在');
+    }
+
+    // 关键校验：当前版本先按“文档创建者可协同”控制，后续可扩展协作者表。
+    if (document.createdBy !== normalizedUserId) {
+      throw new ForbiddenException('无权限访问该文档');
+    }
 
     return document;
   }
@@ -167,6 +199,8 @@ export class YjsStorageService {
     const documentId = this.normalizeId(docId);
     const normalizedUserId = this.normalizeId(userId);
 
+    await this.validateDocumentAccess(documentId, normalizedUserId);
+
     this.logger.log(
       `Upserting collaboration session doc=${documentId}, user=${normalizedUserId}`,
     );
@@ -196,6 +230,32 @@ export class YjsStorageService {
     );
 
     return session;
+  }
+
+  async getActiveSessions(docId: number | string, userId: number | string) {
+    const documentId = this.normalizeId(docId);
+    await this.validateDocumentAccess(documentId, userId);
+
+    const res = await this.prisma.collaborationSession.findMany({
+      where: {
+        documentId,
+        isActive: true,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            account: true,
+          },
+        },
+      },
+      orderBy: {
+        lastSeen: 'desc',
+      },
+    });
+
+    return res;
   }
 
   async markSessionDisconnected(
