@@ -4,9 +4,10 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import { Reflector } from '@nestjs/core';
+import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
+import { ResponseCode } from '../common/constants/response-code.constant';
 import { IS_PUBLIC_KEY } from '../decorator/public.decorator';
 
 @Injectable()
@@ -32,8 +33,11 @@ export class JwtAuthGuard implements CanActivate {
     const token = this.extractTokenFromHeader(request);
 
     if (!token) {
-      console.log('用户未登录');
-      throw new UnauthorizedException('未登录');
+      throw new UnauthorizedException({
+        data: null,
+        message: '未登录',
+        code: ResponseCode.ACCESS_TOKEN_INVALID,
+      });
     }
 
     try {
@@ -42,7 +46,11 @@ export class JwtAuthGuard implements CanActivate {
       });
       request.user = payload as Record<string, unknown>;
     } catch {
-      throw new UnauthorizedException('登录已过期或 token 无效');
+      throw new UnauthorizedException({
+        data: null,
+        message: '登录已过期或 token 无效',
+        code: ResponseCode.ACCESS_TOKEN_INVALID,
+      });
     }
 
     return true;

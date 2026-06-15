@@ -6,8 +6,9 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcrypt';
 import { Prisma } from '../../../generated/prisma/client';
+import { ResponseCode } from '../../common/constants/response-code.constant';
+import { createSuccessResponse } from '../../common/utils/api-response.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAuthDto } from './create-auth.dto';
 
@@ -34,12 +35,16 @@ export class AuthService {
     }
 
     try {
-      return await this.prisma.user.create({
+      const user = await this.prisma.user.create({
         data: {
           account,
           password,
           username: account,
         },
+      });
+
+      return createSuccessResponse(user, {
+        message: '注册成功',
       });
     } catch (error) {
       if (
@@ -72,33 +77,37 @@ export class AuthService {
     };
   }
 
-  async updateRefreshToken(id: any, refreshToken: string) {
+  async updateRefreshToken(id: number, refreshToken: string) {
     return this.prisma.user.update({
       where: { id },
       data: { refreshToken },
     });
   }
 
-  async refresh(id: any, refreshToken: string) {
-    // 查询用户的 refreshToken
+  async refresh(id: number, refreshToken: string) {
     const userRT = await this.prisma.user.findUnique({
-      where: {
-        id,
-      },
+      where: { id },
       select: {
         id: true,
         refreshToken: true,
       },
     });
-    // const tokenState = bcrypt.compareSync(userRT.refreshToken, refreshToken);
-    const tokenState = refreshToken === userRT.refreshToken;
+
+    const tokenState = refreshToken === userRT?.refreshToken;
     if (!tokenState) {
-      throw new ForbiddenException('refreshToken 过期或无效');
+      throw new ForbiddenException({
+        data: null,
+        message: '登录已失效，请重新登录',
+        code: ResponseCode.LOGIN_INVALID,
+      });
     }
 
     const tokens = await this.getTokens(id);
     await this.updateRefreshToken(id, tokens.refreshToken);
-    return tokens;
+
+    return createSuccessResponse(tokens, {
+      message: '刷新 token 成功',
+    });
   }
 
   async login(body: CreateAuthDto) {
@@ -121,6 +130,8 @@ export class AuthService {
     const tokens = await this.getTokens(user.id);
     await this.updateRefreshToken(user.id, tokens.refreshToken);
 
-    return tokens;
+    return createSuccessResponse(tokens, {
+      message: '登录成功',
+    });
   }
 }
