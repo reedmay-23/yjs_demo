@@ -1,8 +1,9 @@
 import { Body, Controller, Post } from '@nestjs/common';
 import { YjsStorageService } from './yjs-storage.service';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 @ApiTags('yjs文档相关')
+@ApiBearerAuth('access-token')
 @Controller('yjs-storage')
 export class YjsStorageController {
   constructor(private readonly yjsService: YjsStorageService) {}

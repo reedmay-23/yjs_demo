@@ -1,5 +1,5 @@
 import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { Public } from '../../decorator/public.decorator';
 import { RefreshTokenGuard } from '../jwt/refresh-token.guard';
@@ -41,6 +41,7 @@ export class AuthController {
   @Public()
   @UseGuards(RefreshTokenGuard)
   @Post('refresh')
+  @ApiBearerAuth('refresh-token')
   @ApiOperation({
     summary: '刷新 token',
     description: '使用 refresh token 刷新 access token 和 refresh token',

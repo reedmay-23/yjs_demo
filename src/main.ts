@@ -32,6 +32,17 @@ async function bootstrap() {
       },
       'access-token', // 这个 name 要和下面 @ApiBearerAuth('access-token') 一致
     )
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        name: 'Authorization',
+        description: '请输入 refresh token',
+        in: 'header',
+      },
+      'refresh-token',
+    )
     .build();
   const document = SwaggerModule.createDocument(app, swaggerOptions);
   SwaggerModule.setup('swagger', app, document);
