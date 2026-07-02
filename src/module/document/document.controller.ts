@@ -2,6 +2,11 @@ import { Body, Controller, Delete, Get, Param, Post, Req } from '@nestjs/common'
 import { ApiBearerAuth, ApiOperation, ApiParam } from '@nestjs/swagger';
 import { Request } from 'express';
 import { DocumentService } from './document.service';
+import {
+  AddCollaboratorDto,
+  GetCollaboratorsDto,
+  RemoveCollaboratorDto,
+} from './dto/add-collaborator.dto';
 import { CreateDocumentDto } from './dto/create-document.dto';
 
 type TokenRequest = Request & {
@@ -38,5 +43,49 @@ export class DocumentController {
   @ApiParam({ name: 'id', type: Number, description: '文档ID', example: 1 })
   remove(@Req() req: TokenRequest, @Param('id') id: string) {
     return this.documentService.remove(req.user.sub, id);
+  }
+
+  @Post('/collaborators/add')
+  @ApiOperation({
+    summary: '添加文档协作者',
+  })
+  addCollaborator(
+    @Req() req: TokenRequest,
+    @Body() addCollaboratorDto: AddCollaboratorDto,
+  ) {
+    return this.documentService.addCollaborator(
+      req.user.sub,
+      addCollaboratorDto.documentId,
+      addCollaboratorDto,
+    );
+  }
+
+  @Post('/collaborators/list')
+  @ApiOperation({
+    summary: '获取文档协作者列表',
+  })
+  getCollaborators(
+    @Req() req: TokenRequest,
+    @Body() getCollaboratorsDto: GetCollaboratorsDto,
+  ) {
+    return this.documentService.getCollaborators(
+      req.user.sub,
+      getCollaboratorsDto.documentId,
+    );
+  }
+
+  @Post('/collaborators/remove')
+  @ApiOperation({
+    summary: '移除文档协作者',
+  })
+  removeCollaborator(
+    @Req() req: TokenRequest,
+    @Body() removeCollaboratorDto: RemoveCollaboratorDto,
+  ) {
+    return this.documentService.removeCollaborator(
+      req.user.sub,
+      removeCollaboratorDto.documentId,
+      removeCollaboratorDto.userId,
+    );
   }
 }

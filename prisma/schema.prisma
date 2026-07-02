@@ -8,29 +8,32 @@ datasource db {
 }
 
 model User {
-  id           Int                    @id @default(autoincrement())
-  username     String                 @unique @db.VarChar(100)
-  password     String                 @default("") @db.VarChar(255)
-  createdAt    DateTime               @default(now()) @map("created_at")
-  updatedAt    DateTime               @updatedAt @map("updated_at")
-  account      String                 @db.VarChar(100)
-  refreshToken String?
-  sessions     CollaborationSession[] @relation("UserSessions")
-  documents    Document[]             @relation("UserDocuments")
+  id                    Int                    @id @default(autoincrement())
+  username              String                 @unique @db.VarChar(100)
+  password              String                 @default("") @db.VarChar(255)
+  createdAt             DateTime               @default(now()) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+  account               String                 @db.VarChar(100)
+  refreshToken          String?
+  sessions              CollaborationSession[] @relation("UserSessions")
+  documents             Document[]             @relation("UserDocuments")
+  documentCollaborators DocumentCollaborator[]
+  collaboratorInvites   DocumentCollaborator[] @relation("DocumentCollaboratorInviter")
 
   @@map("users")
 }
 
 model Document {
-  id        Int                    @id @default(autoincrement())
-  title     String                 @db.VarChar(255)
-  createdBy Int                    @map("create_by")
-  createdAt DateTime               @default(now()) @map("created_at")
-  updatedAt DateTime               @updatedAt @map("updated_at")
-  version   Int                    @default(0) @map("version")
-  content   Json
-  sessions  CollaborationSession[] @relation("DocumentSessions")
-  creator   User                   @relation("UserDocuments", fields: [createdBy], references: [id])
+  id                    Int                    @id @default(autoincrement())
+  title                 String                 @db.VarChar(255)
+  createdBy             Int                    @map("create_by")
+  createdAt             DateTime               @default(now()) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+  version               Int                    @default(0) @map("version")
+  content               Json
+  sessions              CollaborationSession[] @relation("DocumentSessions")
+  creator               User                   @relation("UserDocuments", fields: [createdBy], references: [id])
+  documentCollaborators DocumentCollaborator[]
 
   @@map("documents")
 }
@@ -49,4 +52,24 @@ model CollaborationSession {
   @@index([documentId])
   @@index([lastSeen])
   @@map("collaboration_sessions")
+}
+
+// 文档写作表 用来看哪个人有 查看文档的权限
+model DocumentCollaborator {
+  id         Int      @id @default(autoincrement())
+  documentId Int      @map("document_id")
+  userId     Int      @map("user_id")
+  role       String   @default("editor") @db.VarChar(32) // editor 写作者 viewer 只读 owner 创建人
+  createdBy  Int      @map("created_by") // 邀请人
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  inviter  User     @relation("DocumentCollaboratorInviter", fields: [createdBy], references: [id])
+
+  @@unique([documentId, userId])
+  @@index([documentId])
+  @@index([userId])
+  @@map("document_collaborators")
 }

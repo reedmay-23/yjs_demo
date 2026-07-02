@@ -165,8 +165,24 @@ export class YjsStorageService {
       throw new NotFoundException('文档不存在');
     }
 
-    // 关键校验：当前版本先按“文档创建者可协同”控制，后续可扩展协作者表。
-    if (document.createdBy !== normalizedUserId) {
+    if (document.createdBy === normalizedUserId) {
+      return document;
+    }
+
+    const collaborator = await this.prisma.documentCollaborator.findUnique({
+      where: {
+        documentId_userId: {
+          documentId,
+          userId: normalizedUserId,
+        },
+      },
+      select: {
+        id: true,
+        role: true,
+      },
+    });
+
+    if (!collaborator || collaborator.role !== 'editor') {
       throw new ForbiddenException('无权限访问该文档');
     }
 
