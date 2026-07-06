@@ -165,7 +165,7 @@ export class YjsPersistenceGateway
       }
 
       // 关键校验：进入 y-websocket 前确认用户有文档权限。
-      await this.storageService.validateDocumentAccess(docKey, userId);
+      await this.storageService.validateDocumentAccess(docKey, userId, 'write');
       await this.ensureSessionTracked(docKey, userId);
 
       client.roomId = docKey;

@@ -110,6 +110,33 @@ export class AuthService {
     });
   }
 
+  async getMe(userId: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        account: true,
+        username: true,
+      },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Current user not found');
+    }
+
+    return createSuccessResponse(
+      {
+        id: user.id,
+        account: user.account,
+        name: user.username,
+        username: user.username,
+      },
+      {
+        message: '获取当前用户成功',
+      },
+    );
+  }
+
   async login(body: CreateAuthDto) {
     const { account, password } = body;
     this.logger.log('Login user');

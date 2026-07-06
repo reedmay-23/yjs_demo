@@ -17,6 +17,8 @@ type CreateDocumentInput = {
   content?: number[];
 };
 
+export type DocumentAccessLevel = 'read' | 'write';
+
 @Injectable()
 export class YjsStorageService {
   private readonly logger = new Logger(YjsStorageService.name);
@@ -150,7 +152,11 @@ export class YjsStorageService {
     return document;
   }
 
-  async validateDocumentAccess(docId: number | string, userId: number | string) {
+  async validateDocumentAccess(
+    docId: number | string,
+    userId: number | string,
+    requiredAccess: DocumentAccessLevel = 'write',
+  ) {
     const documentId = this.normalizeId(docId);
     const normalizedUserId = this.normalizeId(userId);
     const document = await this.prisma.document.findUnique({
@@ -182,8 +188,12 @@ export class YjsStorageService {
       },
     });
 
-    if (!collaborator || collaborator.role !== 'editor') {
+    if (!collaborator) {
       throw new ForbiddenException('无权限访问该文档');
+    }
+
+    if (requiredAccess === 'write' && collaborator.role !== 'editor') {
+      throw new ForbiddenException('viewer role is read-only');
     }
 
     return document;
@@ -215,7 +225,7 @@ export class YjsStorageService {
     const documentId = this.normalizeId(docId);
     const normalizedUserId = this.normalizeId(userId);
 
-    await this.validateDocumentAccess(documentId, normalizedUserId);
+    await this.validateDocumentAccess(documentId, normalizedUserId, 'write');
 
     this.logger.log(
       `Upserting collaboration session doc=${documentId}, user=${normalizedUserId}`,
@@ -250,7 +260,7 @@ export class YjsStorageService {
 
   async getActiveSessions(docId: number | string, userId: number | string) {
     const documentId = this.normalizeId(docId);
-    await this.validateDocumentAccess(documentId, userId);
+    await this.validateDocumentAccess(documentId, userId, 'read');
 
     const res = await this.prisma.collaborationSession.findMany({
       where: {

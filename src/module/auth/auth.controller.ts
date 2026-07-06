@@ -1,5 +1,5 @@
-import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { Public } from '../../decorator/public.decorator';
 import { RefreshTokenGuard } from '../jwt/refresh-token.guard';
@@ -10,6 +10,12 @@ type RefreshRequest = Request & {
   user: {
     userId: number;
     refreshToken: string;
+  };
+};
+
+type TokenRequest = Request & {
+  user: {
+    sub: number;
   };
 };
 
@@ -47,7 +53,30 @@ export class AuthController {
     description: '使用 refresh token 刷新 access token 和 refresh token',
   })
   refresh(@Req() req: RefreshRequest) {
-    console.log(req, 'kankan 返回怎么过来的');
     return this.authService.refresh(req.user.userId, req.user.refreshToken);
+  }
+
+  @Get('me')
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: '获取当前用户信息',
+  })
+  @ApiOkResponse({
+    description: '返回当前登录用户基础信息',
+    schema: {
+      example: {
+        code: 0,
+        message: '获取当前用户成功',
+        data: {
+          id: 1,
+          account: 'system',
+          name: 'system',
+          username: 'system',
+        },
+      },
+    },
+  })
+  me(@Req() req: TokenRequest) {
+    return this.authService.getMe(req.user.sub);
   }
 }

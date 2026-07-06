@@ -8,12 +8,13 @@ import { AuthModule } from './module/auth/auth.module';
 import { DocumentModule } from './module/document/document.module';
 import { PrismaModule } from './module/prisma/prisma.module';
 import { StorageModule } from './module/yjs-storage/yjs-storage.module';
+import { UserModule } from './module/user/user.module';
 import { SocketGateway } from './socket/socket.gateway';
 import { YjsPersistenceGateway } from './yjs/yjs-persistence.gateway';
 import { YjsCollabGateway } from './yjs/yjs.gateway';
 
 @Module({
-  imports: [PrismaModule, StorageModule, AuthModule, DocumentModule],
+  imports: [PrismaModule, StorageModule, AuthModule, DocumentModule, UserModule],
   controllers: [AppController],
   providers: [
     AppService,

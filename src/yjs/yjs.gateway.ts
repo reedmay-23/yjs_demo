@@ -276,7 +276,7 @@ export class YjsCollabGateway
     }
 
     // 关键校验：进入协同房间前先确认 token 用户有该文档权限。
-    await this.storageService.validateDocumentAccess(docKey, userId);
+    await this.storageService.validateDocumentAccess(docKey, userId, 'write');
     await this.ensureSessionTracked(docKey, userId);
 
     const cachedRoom = this.rooms.get(docKey);

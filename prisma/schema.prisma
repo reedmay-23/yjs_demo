@@ -26,6 +26,8 @@ model User {
 model Document {
   id                    Int                    @id @default(autoincrement())
   title                 String                 @db.VarChar(255)
+  summary               String?                @db.VarChar(1000)
+  status                String                 @default("active") @db.VarChar(32)
   createdBy             Int                    @map("create_by")
   createdAt             DateTime               @default(now()) @map("created_at")
   updatedAt             DateTime               @updatedAt @map("updated_at")
