@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import {
   OnGatewayConnection,
@@ -8,6 +8,11 @@ import {
 import * as http from 'node:http';
 import * as Y from 'yjs';
 import { WebSocket } from 'ws';
+import {
+  DocumentAccessChangedEvent,
+  DocumentRollbackEvent,
+  YjsRoomEventsService,
+} from '../module/yjs-storage/yjs-room-events.service';
 import { YjsStorageService } from '../module/yjs-storage/yjs-storage.service';
 import { urlParamsHandle } from '../utils/urlParams';
 import { verifyWsAccessToken } from '../utils/ws-auth';
@@ -16,6 +21,7 @@ const yWebsocketUtils = require('y-websocket/bin/utils');
 const setupWSConnection = yWebsocketUtils.setupWSConnection;
 const setPersistence = yWebsocketUtils.setPersistence;
 const getPersistence = yWebsocketUtils.getPersistence;
+const docs = yWebsocketUtils.docs as Map<string, Y.Doc & { conns?: Map<WebSocket, unknown> }>;
 
 type RoomSocket = WebSocket & {
   roomId?: string;
@@ -27,15 +33,23 @@ type RoomSocket = WebSocket & {
   cors: { origin: '*' },
 })
 export class YjsPersistenceGateway
-  implements OnGatewayConnection, OnGatewayDisconnect
+  implements
+    OnGatewayConnection,
+    OnGatewayDisconnect,
+    OnModuleInit,
+    OnModuleDestroy
 {
   private readonly logger = new Logger(YjsPersistenceGateway.name);
   private readonly PERSIST_DEBOUNCE_MS = 1000;
+  private readonly lastModifiedBy = new Map<string, string>();
   private readonly persistTimers = new Map<string, NodeJS.Timeout>();
+  private removeAccessChangedListener?: () => void;
+  private removeRollbackListener?: () => void;
 
   constructor(
     private readonly storageService: YjsStorageService,
     private readonly jwtService: JwtService,
+    private readonly roomEvents: YjsRoomEventsService,
   ) {
     if (!getPersistence()) {
       setPersistence({
@@ -54,18 +68,51 @@ export class YjsPersistenceGateway
             );
           }
 
-          doc.on('update', () => {
+          doc.on('update', (update, origin) => {
+            const originSocket = origin as RoomSocket | undefined;
+            if (originSocket?.userId) {
+              this.lastModifiedBy.set(docName, originSocket.userId);
+              void this.storageService
+                .logDocumentUpdate(docName, originSocket.userId, update)
+                .catch((error) => {
+                  this.logger.error(
+                    `Failed to log y-websocket update for doc=${docName}`,
+                    error,
+                  );
+                });
+            }
+
             this.schedulePersist(docName, doc);
           });
         },
         provider: null,
         writeState: async (docName: string, doc: Y.Doc) => {
           this.clearPersistTimer(docName);
-          await this.storageService.saveSnapshot(docName, doc);
+          await this.storageService.saveSnapshotByUser(
+            docName,
+            doc,
+            this.lastModifiedBy.get(docName),
+          );
+          this.lastModifiedBy.delete(docName);
           this.logger.log(`Persistence flushed final snapshot for doc=${docName}`);
         },
       });
     }
+  }
+
+  onModuleInit() {
+    this.removeRollbackListener = this.roomEvents.onDocumentRolledBack((event) =>
+      this.handleDocumentRolledBack(event),
+    );
+    this.removeAccessChangedListener =
+      this.roomEvents.onDocumentAccessChanged((event) =>
+        this.handleDocumentAccessChanged(event),
+      );
+  }
+
+  onModuleDestroy() {
+    this.removeAccessChangedListener?.();
+    this.removeRollbackListener?.();
   }
 
   private clearPersistTimer(docName: string) {
@@ -83,7 +130,8 @@ export class YjsPersistenceGateway
 
     const timer = setTimeout(() => {
       this.persistTimers.delete(docName);
-      void this.storageService.saveSnapshot(docName, doc).catch((error) => {
+      const userId = this.lastModifiedBy.get(docName);
+      void this.storageService.saveSnapshotByUser(docName, doc, userId).catch((error) => {
         this.logger.error(
           `Failed to persist y-websocket snapshot for doc=${docName}`,
           error,
@@ -92,6 +140,54 @@ export class YjsPersistenceGateway
     }, this.PERSIST_DEBOUNCE_MS);
 
     this.persistTimers.set(docName, timer);
+  }
+
+  private handleDocumentRolledBack(event: DocumentRollbackEvent) {
+    const docName = event.documentId.toString();
+    this.clearPersistTimer(docName);
+    this.lastModifiedBy.delete(docName);
+
+    const doc = docs.get(docName);
+    if (!doc) {
+      return;
+    }
+
+    const conns = doc.conns ? Array.from(doc.conns.keys()) : [];
+    for (const conn of conns) {
+      if (
+        conn.readyState === WebSocket.OPEN ||
+        conn.readyState === WebSocket.CONNECTING
+      ) {
+        conn.close(4409, 'document_rolled_back');
+      }
+    }
+
+    docs.delete(docName);
+    doc.destroy();
+    this.logger.log(
+      `Discarded y-websocket doc=${docName} after rollback to sourceVersion=${event.sourceVersion}, version=${event.version}`,
+    );
+  }
+
+  private handleDocumentAccessChanged(event: DocumentAccessChangedEvent) {
+    const docName = event.documentId.toString();
+    const doc = docs.get(docName);
+    if (!doc?.conns) {
+      return;
+    }
+
+    for (const conn of doc.conns.keys() as Iterable<RoomSocket>) {
+      if (conn.userId !== event.userId.toString()) {
+        continue;
+      }
+
+      if (
+        conn.readyState === WebSocket.OPEN ||
+        conn.readyState === WebSocket.CONNECTING
+      ) {
+        conn.close(4403, event.reason);
+      }
+    }
   }
 
   private getDocKey(docId: number | string) {

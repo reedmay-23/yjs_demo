@@ -1,5 +1,10 @@
 # 协同编辑服务前端对接文档
 
+Current maintained docs:
+
+- Backend maintenance: `docs/yjs-collab-maintenance.md`
+- Frontend API: `docs/yjs-collab-frontend-api.md`
+
 本文档面向前端接入当前项目里的协同编辑服务，重点说明 `/collab1`、`/collab2` 两个 WebSocket 服务的实现方式、调用参数、鉴权方式和前端对接流程。
 
 ## 1. 服务定位
@@ -57,6 +62,14 @@ const wsUrl = `ws://localhost:3000/collab1?docId=${docId}&accessToken=${encodeUR
 const ws = new WebSocket(wsUrl);
 ```
 
+Presence push is opt-in. Add `presence=1` only after the frontend handles `messagePresence = 2`:
+
+```ts
+const wsUrl = `ws://localhost:3000/collab1?docId=${docId}&accessToken=${encodeURIComponent(accessToken)}&presence=1`;
+```
+
+Without `presence=1`, the server only sends Yjs sync/awareness messages to keep older clients compatible.
+
 安全规则：
 
 - 服务端只信任 JWT payload 里的 `sub` 作为用户 ID。
@@ -102,6 +115,7 @@ const ws = new WebSocket(wsUrl);
 - 新文档创建时会写入一个空的 Y.Doc 快照。
 - WebSocket 房间首次加载时从 `documents.content` 恢复 Y.Doc。
 - 收到 Yjs update 后，服务端 1 秒防抖保存快照。
+- 保存快照时会维护 `document_histories`，可用于历史列表和版本回退；同一文档、同一用户 5 分钟内的 `edit` 历史会合并。
 - `/collab1` 房间没人在线后会延迟 30 分钟清理内存房间，清理前会再次保存快照。
 - `/collab2` 使用 `y-websocket` persistence，最后一个连接关闭时会 flush 快照。
 
@@ -186,12 +200,99 @@ type CollaborationSession = {
 - WebSocket 连接或断开后重新拉取。
 - 如果需要更实时的在线用户列表，优先基于 Yjs awareness 渲染。
 
+### 5.5 获取文档历史记录
+
+```http
+POST /document/history/list
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{
+  "documentId": 1
+}
+```
+
+权限：`owner`、`editor`、`viewer` 均可查看。
+
+返回字段包含 `action`、`version`、`sourceVersion`、`createdAt`、`user` 和 `contentSize`。列表不返回完整 Yjs 快照。
+
+`edit` 历史按 5 分钟窗口合并，代表该用户在这个时间窗口内最后一次保存的完整文档快照。回退不会丢内容，但不能回退到窗口内每一次敲字的瞬间。
+
+### 5.6 回退到历史版本
+
+```http
+POST /document/history/rollback
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{
+  "documentId": 1,
+  "historyId": 10,
+  "summary": "恢复到确认稿"
+}
+```
+
+权限：仅 `owner` 和 `editor` 可回退，`viewer` 不可回退。
+
+回退成功后会新增一条 `rollback` 历史记录。前端展示时可使用：
+
+```ts
+`${history.user.username} 在 ${history.createdAt} 回退到了版本 ${history.sourceVersion}`
+```
+
+注意：回退成功后，服务端会关闭该文档所有在线 WebSocket，关闭码为 `4409`，原因为 `document_rolled_back`。前端收到后必须销毁当前 Tiptap editor 和本地 `Y.Doc`，再重新创建并连接；不要复用旧 Y.Doc。
+
+完整说明见 `docs/yjs-history-rollback.md`。
+
+### 5.7 手动保存关键版本
+
+```http
+POST /document/history/manual-snapshot
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{
+  "documentId": 1,
+  "summary": "提交评审前版本"
+}
+```
+
+该接口生成 `manual_snapshot` 历史，不参与自动 `edit` 历史的 5 分钟合并。适合用户主动标记重要版本。
+
+### 5.8 Tiptap 历史对比快照
+
+```http
+POST /document/history/compare-snapshot
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{
+  "documentId": 1,
+  "historyId": 10,
+  "field": "default"
+}
+```
+
+后端返回历史版本和当前版本的 Yjs update。前端需要创建两个新的 `Y.Doc`，用相同 Tiptap extensions/schema 还原内容，再做富文本对比。
+
+### 5.9 权限变更关闭连接
+
+当协作者被移除，或从 `editor` 降级为 `viewer` 时，服务端会关闭该用户在文档下的在线 WebSocket：
+
+| close code | reason | 处理 |
+| --- | --- | --- |
+| `4403` | `collaborator_removed` | 退出文档或展示无权限状态 |
+| `4403` | `permission_changed` | 重新拉取详情；如果是 viewer，切换只读模式 |
+
 ## 6. collab1 前端接入示例
 
 `/collab1` 使用标准 Yjs sync 和 awareness 消息格式：
 
 - `messageSync = 0`
 - `messageAwareness = 1`
+- `messagePresence = 2`
+
+On connection, the server now proactively sends a `messageSync` packet containing Yjs `SyncStep2` with the current server snapshot. The frontend should handle it with the same `syncProtocol.readSyncMessage(...)` path used for other sync packets. This ensures a newly opened editor receives historical Y.Doc content even before its own `SyncStep1` round trip completes.
 
 前端可以用原生 WebSocket 加 `y-protocols` 自行收发协议消息。
 
@@ -205,11 +306,13 @@ import { Awareness } from 'y-protocols/awareness';
 
 const messageSync = 0;
 const messageAwareness = 1;
+const messagePresence = 2;
 
 type CreateCollabClientOptions = {
   baseWsUrl: string; // 例如 ws://localhost:3000
   docId: number | string;
   accessToken: string;
+  presence?: boolean;
 };
 
 export function createCollabClient(options: CreateCollabClientOptions) {
@@ -217,7 +320,8 @@ export function createCollabClient(options: CreateCollabClientOptions) {
   const ytext = ydoc.getText('document');
   const awareness = new Awareness(ydoc);
 
-  const url = `${options.baseWsUrl}/collab1?docId=${options.docId}&accessToken=${encodeURIComponent(options.accessToken)}`;
+  const presenceParam = options.presence ? '&presence=1' : '';
+  const url = `${options.baseWsUrl}/collab1?docId=${options.docId}&accessToken=${encodeURIComponent(options.accessToken)}${presenceParam}`;
   const ws = new WebSocket(url);
   ws.binaryType = 'arraybuffer';
 
@@ -267,6 +371,16 @@ export function createCollabClient(options: CreateCollabClientOptions) {
         decoding.readVarUint8Array(decoder),
         ws,
       );
+      return;
+    }
+
+    if (messageType === messagePresence) {
+      const jsonBytes = decoding.readVarUint8Array(decoder);
+      const event = JSON.parse(new TextDecoder().decode(jsonBytes));
+
+      if (event.type === 'onlineUsersChanged') {
+        // Update online user list/count in your app state.
+      }
     }
   };
 
@@ -421,4 +535,3 @@ ws://localhost:3000/collab2/1
 | 多人编辑不同步 | 是否发送/解析 Yjs 二进制协议，是否误发 JSON |
 | 在线用户不更新 | 查询 `/yjs-storage/sessions/{docId}`，并检查断开连接是否触发 |
 | 刷新后内容丢失 | 检查 `documents.content` 是否保存快照，服务端日志是否有 saveSnapshot 错误 |
-

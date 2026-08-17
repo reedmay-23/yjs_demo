@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString } from 'class-validator';
 
 export type DocumentCollaboratorRole = 'viewer' | 'editor';
 
@@ -11,12 +11,21 @@ export class AddCollaboratorDto {
   @IsInt({ message: '文档 ID 必须是整数' })
   documentId: number;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: '协作者用户 ID',
     example: 2,
   })
   @IsInt({ message: '用户 ID 必须是整数' })
-  userId: number;
+  @IsOptional()
+  userId?: number;
+
+  @ApiPropertyOptional({
+    description: 'Collaborator account.',
+    example: 'zhangsan',
+  })
+  @IsOptional()
+  @IsString({ message: 'account must be a string' })
+  account?: string;
 
   @ApiPropertyOptional({
     description: '协作者角色，viewer 只读，editor 可编辑',

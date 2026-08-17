@@ -17,6 +17,8 @@ model User {
   refreshToken          String?
   sessions              CollaborationSession[] @relation("UserSessions")
   documents             Document[]             @relation("UserDocuments")
+  documentHistories     DocumentHistory[]
+  documentUpdates       DocumentUpdate[]
   documentCollaborators DocumentCollaborator[]
   collaboratorInvites   DocumentCollaborator[] @relation("DocumentCollaboratorInviter")
 
@@ -34,10 +36,49 @@ model Document {
   version               Int                    @default(0) @map("version")
   content               Json
   sessions              CollaborationSession[] @relation("DocumentSessions")
+  histories             DocumentHistory[]
+  updates               DocumentUpdate[]
   creator               User                   @relation("UserDocuments", fields: [createdBy], references: [id])
   documentCollaborators DocumentCollaborator[]
 
   @@map("documents")
+}
+
+model DocumentHistory {
+  id         Int      @id @default(autoincrement())
+  documentId Int      @map("document_id")
+  userId     Int      @map("user_id")
+  version    Int
+  action     String   @db.VarChar(32) // edit, rollback, metadata_update
+  summary    String?  @db.VarChar(500)
+  content    Json? // Y.Doc 快照 number[]
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user          User     @relation(fields: [userId], references: [id])
+  sourceVersion Int?     @map("source_version")
+
+  @@index([documentId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("document_histories")
+}
+
+model DocumentUpdate {
+  id         Int      @id @default(autoincrement())
+  documentId Int      @map("document_id")
+  userId     Int?     @map("user_id")
+  update     Json
+  byteLength Int      @map("byte_length")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([documentId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("document_updates")
 }
 
 model CollaborationSession {

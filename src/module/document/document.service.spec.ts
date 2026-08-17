@@ -4,6 +4,7 @@ import { DocumentService } from './document.service';
 describe('DocumentService', () => {
   let service: DocumentService;
   let prisma: any;
+  let roomEvents: any;
   let yjsStorageService: any;
 
   beforeEach(() => {
@@ -20,6 +21,7 @@ describe('DocumentService', () => {
       },
       user: {
         findUnique: jest.fn(),
+        findFirst: jest.fn(),
       },
     };
 
@@ -40,8 +42,11 @@ describe('DocumentService', () => {
       }),
       validateDocumentAccess: jest.fn(),
     };
+    roomEvents = {
+      emitDocumentAccessChanged: jest.fn(),
+    };
 
-    service = new DocumentService(prisma, yjsStorageService);
+    service = new DocumentService(prisma, yjsStorageService, roomEvents);
   });
 
   it('should be defined', () => {
@@ -106,6 +111,40 @@ describe('DocumentService', () => {
       userId: 2,
       role: 'editor',
       createdBy: 1,
+    });
+  });
+
+  it('creates a collaborator by account', async () => {
+    prisma.user.findFirst.mockResolvedValue({ id: 2 });
+    prisma.document.findUnique.mockResolvedValue({ id: 10, createdBy: 1 });
+    prisma.user.findUnique.mockResolvedValue({ id: 2 });
+    prisma.documentCollaborator.findFirst.mockResolvedValue(null);
+    prisma.documentCollaborator.create.mockResolvedValue({
+      id: 99,
+      documentId: 10,
+      userId: 2,
+      role: 'editor',
+      createdBy: 1,
+    });
+
+    const result = await service.addCollaborator(1, 10, {
+      documentId: 10,
+      account: 'viewer',
+    });
+
+    expect(prisma.user.findFirst).toHaveBeenCalledWith({
+      where: { account: 'viewer' },
+      select: { id: true },
+    });
+    expect(prisma.documentCollaborator.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: 2,
+        }),
+      }),
+    );
+    expect(result.data).toMatchObject({
+      userId: 2,
     });
   });
 
@@ -217,6 +256,11 @@ describe('DocumentService', () => {
     });
     expect(result.data).toMatchObject({
       role: 'viewer',
+    });
+    expect(roomEvents.emitDocumentAccessChanged).toHaveBeenCalledWith({
+      documentId: 10,
+      userId: 2,
+      reason: 'permission_changed',
     });
   });
 });

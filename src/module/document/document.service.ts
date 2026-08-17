@@ -8,12 +8,19 @@ import {
 import * as Y from 'yjs';
 import { createSuccessResponse } from '../../common/utils/api-response.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { YjsRoomEventsService } from '../yjs-storage/yjs-room-events.service';
 import { YjsStorageService } from '../yjs-storage/yjs-storage.service';
 import {
   AddCollaboratorDto,
   DocumentCollaboratorRole,
 } from './dto/add-collaborator.dto';
 import { CreateDocumentDto } from './dto/create-document.dto';
+import {
+  CompareHistorySnapshotDto,
+  GetDocumentHistoryDto,
+  ManualSnapshotDto,
+  RollbackDocumentDto,
+} from './dto/document-history.dto';
 import { UpdateDocumentDto } from './dto/update-document.dto';
 
 @Injectable()
@@ -21,6 +28,7 @@ export class DocumentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly yjsStorageService: YjsStorageService,
+    private readonly roomEvents: YjsRoomEventsService,
   ) {}
 
   async create(userId: number, createDocumentDto: CreateDocumentDto) {
@@ -289,6 +297,58 @@ export class DocumentService {
     });
   }
 
+  async getHistory(userId: number, dto: GetDocumentHistoryDto) {
+    const histories = await this.yjsStorageService.getDocumentHistories(
+      dto.documentId,
+      userId,
+    );
+
+    return createSuccessResponse(histories, {
+      message: '获取文档历史记录成功',
+    });
+  }
+
+  async rollback(userId: number, dto: RollbackDocumentDto) {
+    const res = await this.yjsStorageService.rollbackDocumentToHistory(
+      dto.documentId,
+      userId,
+      dto.historyId,
+      dto.summary,
+    );
+
+    return createSuccessResponse(res, {
+      message: '文档版本回退成功',
+    });
+  }
+
+  async createManualSnapshot(userId: number, dto: ManualSnapshotDto) {
+    const res = await this.yjsStorageService.createManualSnapshot(
+      dto.documentId,
+      userId,
+      dto.summary,
+    );
+
+    return createSuccessResponse(res, {
+      message: '手动保存历史版本成功',
+    });
+  }
+
+  async compareHistorySnapshot(
+    userId: number,
+    dto: CompareHistorySnapshotDto,
+  ) {
+    const res = await this.yjsStorageService.getHistoryCompareSnapshot(
+      dto.documentId,
+      userId,
+      dto.historyId,
+      dto.field,
+    );
+
+    return createSuccessResponse(res, {
+      message: '获取历史对比快照成功',
+    });
+  }
+
   async getStatistics(userId: number) {
     const visibleDocumentWhere = {
       OR: [
@@ -374,10 +434,8 @@ export class DocumentService {
     addCollaboratorDto: AddCollaboratorDto,
   ) {
     const documentId = this.normalizeRequestId(docId, 'documentId');
-    const collaboratorUserId = this.normalizeRequestId(
-      addCollaboratorDto.userId,
-      'userId',
-    );
+    const collaboratorUserId =
+      await this.resolveCollaboratorUserId(addCollaboratorDto);
     const role = this.normalizeRole(addCollaboratorDto.role);
 
     if (collaboratorUserId === ownerId) {
@@ -517,6 +575,12 @@ export class DocumentService {
       },
     });
 
+    this.roomEvents.emitDocumentAccessChanged({
+      documentId,
+      userId: collaboratorUserId,
+      reason: 'collaborator_removed',
+    });
+
     return createSuccessResponse(res, {
       message: '移除协作者成功',
     });
@@ -570,6 +634,14 @@ export class DocumentService {
       },
     });
 
+    if (nextRole !== 'editor') {
+      this.roomEvents.emitDocumentAccessChanged({
+        documentId,
+        userId: collaboratorUserId,
+        reason: 'permission_changed',
+      });
+    }
+
     return createSuccessResponse(res, {
       message: '更新协作者角色成功',
     });
@@ -593,6 +665,34 @@ export class DocumentService {
     }
 
     return document;
+  }
+
+  private async resolveCollaboratorUserId(
+    addCollaboratorDto: AddCollaboratorDto,
+  ) {
+    const account = addCollaboratorDto.account?.trim();
+
+    if (addCollaboratorDto.account !== undefined) {
+      if (!account) {
+        throw new BadRequestException('account is required');
+      }
+
+      const user = await this.prisma.user.findFirst({
+        where: { account },
+        select: { id: true },
+      });
+
+      if (!user) {
+        throw new NotFoundException('user account not found');
+      }
+
+      return user.id;
+    }
+
+    return this.normalizeRequestId(
+      addCollaboratorDto.userId,
+      'userId or account',
+    );
   }
 
   private normalizeRequestId(

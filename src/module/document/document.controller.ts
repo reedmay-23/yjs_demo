@@ -9,6 +9,12 @@ import {
   UpdateCollaboratorRoleDto,
 } from './dto/add-collaborator.dto';
 import { CreateDocumentDto } from './dto/create-document.dto';
+import {
+  CompareHistorySnapshotDto,
+  GetDocumentHistoryDto,
+  ManualSnapshotDto,
+  RollbackDocumentDto,
+} from './dto/document-history.dto';
 import { UpdateDocumentDto } from './dto/update-document.dto';
 
 type TokenRequest = Request & {
@@ -158,6 +164,56 @@ export class DocumentController {
   })
   update(@Req() req: TokenRequest, @Body() updateDocumentDto: UpdateDocumentDto) {
     return this.documentService.updateMetadata(req.user.sub, updateDocumentDto);
+  }
+
+  @Post('/history/list')
+  @ApiOperation({
+    summary: '获取文档修改历史',
+  })
+  getHistory(
+    @Req() req: TokenRequest,
+    @Body() getDocumentHistoryDto: GetDocumentHistoryDto,
+  ) {
+    return this.documentService.getHistory(req.user.sub, getDocumentHistoryDto);
+  }
+
+  @Post('/history/rollback')
+  @ApiOperation({
+    summary: '回退到指定历史版本',
+  })
+  rollback(
+    @Req() req: TokenRequest,
+    @Body() rollbackDocumentDto: RollbackDocumentDto,
+  ) {
+    return this.documentService.rollback(req.user.sub, rollbackDocumentDto);
+  }
+
+  @Post('/history/manual-snapshot')
+  @ApiOperation({
+    summary: '手动保存关键历史版本',
+  })
+  manualSnapshot(
+    @Req() req: TokenRequest,
+    @Body() manualSnapshotDto: ManualSnapshotDto,
+  ) {
+    return this.documentService.createManualSnapshot(
+      req.user.sub,
+      manualSnapshotDto,
+    );
+  }
+
+  @Post('/history/compare-snapshot')
+  @ApiOperation({
+    summary: '获取 Tiptap 历史对比快照',
+  })
+  compareSnapshot(
+    @Req() req: TokenRequest,
+    @Body() compareSnapshotDto: CompareHistorySnapshotDto,
+  ) {
+    return this.documentService.compareHistorySnapshot(
+      req.user.sub,
+      compareSnapshotDto,
+    );
   }
 
   @Get('/statistics')
