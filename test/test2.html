@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Yjs + NestJS 协同编辑 Demo</title>
+  <!-- 引入 Yjs -->
+  <script src="https://cdn.jsdelivr.net/npm/yjs@13.6.10/dist/y.min.js"></script>
+  <!-- 引入 Socket.IO 客户端 -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+      #editor {
+          width: 100%;
+          height: 300px;
+          font-family: monospace;
+          font-size: 16px;
+          padding: 10px;
+          border: 1px solid #ccc;
+          box-sizing: border-box;
+      }
+      body {
+          max-width: 800px;
+          margin: 20px auto;
+          padding: 0 20px;
+      }
+  </style>
+</head>
+<body>
+<h1>协同文档编辑 (Doc ID: a8126)</h1>
+<textarea id="editor" placeholder="开始输入..."></textarea>
+<p><small>打开多个窗口测试协同效果</small></p>
+
+<script>
+  // ========== 配置 ==========
+  const DOC_ID = 'a8126';
+  const SOCKET_URL = 'http://localhost:3892'; // 你的 NestJS 服务地址
+  const SOCKET_PATH = '/collab';             // 必须和服务端 @WebSocketGateway({ path: '/collab' }) 一致
+
+  // ========== 初始化 Yjs ==========
+  const ydoc = new Y.Doc();
+  const ytext = ydoc.getText('document'); // 共享的文本类型，key 为 'document'
+
+  const editor = document.getElementById('editor');
+
+  // ========== Yjs → 编辑器 同步 ==========
+  ytext.observe(() => {
+    // 防止自己触发的更新再次写入（虽然 transact 已隔离，但保险起见）
+    const currentContent = ytext.toString();
+    if (editor.value !== currentContent) {
+      editor.value = currentContent;
+    }
+  });
+
+  // ========== 编辑器 → Yjs 同步（优化版）==========
+  let isApplyingRemoteChange = false;
+
+  editor.addEventListener('input', () => {
+    if (isApplyingRemoteChange) return; // 避免循环
+
+    const localContent = editor.value;
+    ydoc.transact(() => {
+      // 只同步差异（这里简化为全量替换，实际可用更细粒度）
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, localContent);
+    });
+  });
+
+  // ========== WebSocket 连接 ==========
+  const socket = io(SOCKET_URL, {
+    path: SOCKET_PATH,
+  });
+
+  socket.on('connect', () => {
+    console.log('✅ WebSocket connected. Joining document:', DOC_ID);
+    socket.emit('join', { docId: DOC_ID });
+  });
+
+  socket.on('connect_error', (err) => {
+    console.error('❌ WebSocket connection error:', err);
+  });
+
+  // ========== 接收初始文档 ==========
+  socket.on('initDoc', (data) => {
+    console.log('📥 Received initial document');
+    try {
+      const update = new Uint8Array(data.update);
+      Y.applyUpdate(ydoc, update);
+    } catch (e) {
+      console.error('Failed to apply initDoc:', e);
+    }
+  });
+
+  // ========== 接收他人更新 ==========
+  socket.on('update', (data) => {
+    try {
+      const update = new Uint8Array(data.update);
+      isApplyingRemoteChange = true;
+      Y.applyUpdate(ydoc, update); // 自动合并，无冲突
+      isApplyingRemoteChange = false;
+    } catch (e) {
+      console.error('Failed to apply remote update:', e);
+    }
+  });
+
+  // ========== 监听本地 Yjs 变化并发送 ==========
+  ydoc.on('update', (update, origin) => {
+    // origin === 'socket' 表示是远程更新，避免回环
+    if (origin !== 'socket') {
+      // 转为普通数组以便 JSON 序列化
+      socket.emit('update', {
+        docId: DOC_ID,
+        update: Array.from(update),
+      });
+    }
+  });
+
+  // ========== 页面卸载时清理 ==========
+  window.addEventListener('beforeunload', () => {
+    ydoc.destroy();
+  });
+</script>
+</body>
+</html>
