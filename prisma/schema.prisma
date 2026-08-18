@@ -21,6 +21,16 @@ model User {
   documentUpdates       DocumentUpdate[]
   documentCollaborators DocumentCollaborator[]
   collaboratorInvites   DocumentCollaborator[] @relation("DocumentCollaboratorInviter")
+  whiteboards           Whiteboard[]           @relation("WhiteboardCreator")
+  whiteboardElements    WhiteboardElement[]    @relation("WhiteboardElementCreator")
+  chatMessages          ChatMessage[]          @relation("ChatMessageAuthor")
+  taskBoards            TaskBoard[]            @relation("TaskBoardCreator")
+  assignedTaskCards     TaskCard[]             @relation("TaskCardAssignee")
+  createdTaskCards      TaskCard[]             @relation("TaskCardCreator")
+  spreadsheets          Spreadsheet[]          @relation("SpreadsheetCreator")
+  spreadsheetCells      SpreadsheetCell[]      @relation("SpreadsheetCellCreator")
+  mediaFiles            MediaFile[]            @relation("MediaFileUploader")
+  mediaAnnotations      MediaAnnotation[]      @relation("MediaAnnotationAuthor")
 
   @@map("users")
 }
@@ -40,6 +50,11 @@ model Document {
   updates               DocumentUpdate[]
   creator               User                   @relation("UserDocuments", fields: [createdBy], references: [id])
   documentCollaborators DocumentCollaborator[]
+  whiteboards           Whiteboard[]           @relation("DocumentWhiteboards")
+  chatRoom              ChatRoom?              @relation("DocumentChatRoom")
+  taskBoards            TaskBoard[]            @relation("DocumentTaskBoards")
+  spreadsheets          Spreadsheet[]          @relation("DocumentSpreadsheets")
+  mediaFiles            MediaFile[]            @relation("DocumentMediaFiles")
 
   @@map("documents")
 }
@@ -115,4 +130,237 @@ model DocumentCollaborator {
   @@index([documentId])
   @@index([userId])
   @@map("document_collaborators")
+}
+
+// ============================================
+// 新功能模块数据模型
+// ============================================
+
+// 1. 协同白板/绘图功能
+model Whiteboard {
+  id          Int      @id @default(autoincrement())
+  documentId  Int      @map("document_id")
+  title       String   @default("Untitled Whiteboard") @db.VarChar(255)
+  description String?  @db.VarChar(1000)
+  content     Json // Y.Map 数据，包含绘图元素
+  version     Int      @default(0)
+  createdBy   Int      @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  document Document            @relation("DocumentWhiteboards", fields: [documentId], references: [id], onDelete: Cascade)
+  creator  User                @relation("WhiteboardCreator", fields: [createdBy], references: [id])
+  elements WhiteboardElement[]
+
+  @@index([documentId])
+  @@index([createdBy])
+  @@map("whiteboards")
+}
+
+model WhiteboardElement {
+  id           Int      @id @default(autoincrement())
+  whiteboardId Int      @map("whiteboard_id")
+  elementType  String   @map("element_type") @db.VarChar(32) // pen, shape, text, image, line, arrow
+  properties   Json // 元素属性（位置、大小、样式等）
+  zIndex       Int      @default(0) @map("z_index")
+  createdBy    Int      @map("created_by")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  whiteboard Whiteboard @relation(fields: [whiteboardId], references: [id], onDelete: Cascade)
+  creator    User       @relation("WhiteboardElementCreator", fields: [createdBy], references: [id])
+
+  @@index([whiteboardId])
+  @@index([elementType])
+  @@map("whiteboard_elements")
+}
+
+// 2. 实时聊天/评论系统
+model ChatRoom {
+  id         Int      @id @default(autoincrement())
+  documentId Int      @map("document_id")
+  name       String   @default("Document Chat") @db.VarChar(255)
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  document Document      @relation("DocumentChatRoom", fields: [documentId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+
+  @@unique([documentId])
+  @@map("chat_rooms")
+}
+
+model ChatMessage {
+  id          Int      @id @default(autoincrement())
+  roomId      Int      @map("room_id")
+  userId      Int      @map("user_id")
+  content     String   @db.Text
+  messageType String   @default("text") @map("message_type") @db.VarChar(32) // text, image, file, system
+  contextType String   @default("chat") @map("context_type") @db.VarChar(32) // chat, inline_comment
+  quotedText  String?  @map("quoted_text") @db.Text // selected document text for an inline comment root
+  parentId    Int?     @map("parent_id") // 回复消息ID
+  mentions    Json? // @提及的用户ID列表
+  reactions   Json? // 表情反应 {emoji: [userId, ...]}
+  isEdited    Boolean  @default(false) @map("is_edited")
+  isDeleted   Boolean  @default(false) @map("is_deleted")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  room    ChatRoom      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user    User          @relation("ChatMessageAuthor", fields: [userId], references: [id])
+  parent  ChatMessage?  @relation("ChatMessageReplies", fields: [parentId], references: [id], onDelete: SetNull)
+  replies ChatMessage[] @relation("ChatMessageReplies")
+
+  @@index([roomId])
+  @@index([roomId, contextType])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("chat_messages")
+}
+
+// 3. 任务看板/项目管理
+model TaskBoard {
+  id          Int      @id @default(autoincrement())
+  documentId  Int      @map("document_id")
+  title       String   @default("Task Board") @db.VarChar(255)
+  description String?  @db.VarChar(1000)
+  createdBy   Int      @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  document Document     @relation("DocumentTaskBoards", fields: [documentId], references: [id], onDelete: Cascade)
+  creator  User         @relation("TaskBoardCreator", fields: [createdBy], references: [id])
+  columns  TaskColumn[]
+
+  @@index([documentId])
+  @@map("task_boards")
+}
+
+model TaskColumn {
+  id        Int      @id @default(autoincrement())
+  boardId   Int      @map("board_id")
+  title     String   @db.VarChar(255)
+  position  Int      @default(0)
+  color     String?  @db.VarChar(32)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  board TaskBoard  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  cards TaskCard[]
+
+  @@index([boardId])
+  @@map("task_columns")
+}
+
+model TaskCard {
+  id          Int       @id @default(autoincrement())
+  columnId    Int       @map("column_id")
+  title       String    @db.VarChar(255)
+  description String?   @db.Text
+  position    Int       @default(0)
+  priority    String    @default("medium") @db.VarChar(32) // low, medium, high, urgent
+  dueDate     DateTime? @map("due_date")
+  assigneeId  Int?      @map("assignee_id")
+  tags        Json? // 标签数组
+  attachments Json? // 附件信息
+  createdBy   Int       @map("created_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  column   TaskColumn @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  assignee User?      @relation("TaskCardAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  creator  User       @relation("TaskCardCreator", fields: [createdBy], references: [id])
+
+  @@index([columnId])
+  @@index([assigneeId])
+  @@index([position])
+  @@map("task_cards")
+}
+
+// 4. 表格协作编辑
+model Spreadsheet {
+  id         Int      @id @default(autoincrement())
+  documentId Int      @map("document_id")
+  title      String   @default("Untitled Spreadsheet") @db.VarChar(255)
+  rowCount   Int      @default(100) @map("row_count")
+  colCount   Int      @default(26) @map("col_count")
+  content    Json // Y.Map 数据，包含单元格数据
+  version    Int      @default(0)
+  createdBy  Int      @map("created_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  document Document          @relation("DocumentSpreadsheets", fields: [documentId], references: [id], onDelete: Cascade)
+  creator  User              @relation("SpreadsheetCreator", fields: [createdBy], references: [id])
+  cells    SpreadsheetCell[]
+
+  @@index([documentId])
+  @@map("spreadsheets")
+}
+
+model SpreadsheetCell {
+  id            Int      @id @default(autoincrement())
+  spreadsheetId Int      @map("spreadsheet_id")
+  row           Int
+  col           Int
+  value         String?  @db.Text
+  formula       String?  @db.VarChar(1000)
+  format        Json? // 单元格格式（字体、颜色、边框等）
+  validation    Json? // 数据验证规则
+  createdBy     Int      @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  spreadsheet Spreadsheet @relation(fields: [spreadsheetId], references: [id], onDelete: Cascade)
+  creator     User        @relation("SpreadsheetCellCreator", fields: [createdBy], references: [id])
+
+  @@unique([spreadsheetId, row, col])
+  @@index([spreadsheetId])
+  @@index([row, col])
+  @@map("spreadsheet_cells")
+}
+
+// 5. 多媒体内容支持
+model MediaFile {
+  id         Int      @id @default(autoincrement())
+  documentId Int      @map("document_id")
+  fileName   String   @map("file_name") @db.VarChar(255)
+  fileType   String   @map("file_type") @db.VarChar(32) // image, video, audio
+  fileSize   Int      @map("file_size")
+  filePath   String   @map("file_path") @db.VarChar(500)
+  mimeType   String   @map("mime_type") @db.VarChar(100)
+  metadata   Json? // 媒体元数据（时长、尺寸等）
+  uploadedBy Int      @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  document    Document          @relation("DocumentMediaFiles", fields: [documentId], references: [id], onDelete: Cascade)
+  uploader    User              @relation("MediaFileUploader", fields: [uploadedBy], references: [id])
+  annotations MediaAnnotation[]
+
+  @@index([documentId])
+  @@index([fileType])
+  @@map("media_files")
+}
+
+model MediaAnnotation {
+  id             Int      @id @default(autoincrement())
+  mediaId        Int      @map("media_id")
+  userId         Int      @map("user_id")
+  annotationType String   @map("annotation_type") @db.VarChar(32) // comment, highlight, drawing, timestamp
+  content        String   @db.Text
+  position       Json // 标注位置信息 {x, y, width, height, timestamp, ...}
+  startTime      Float?   @map("start_time") // 视频/音频开始时间（秒）
+  endTime        Float?   @map("end_time") // 视频/音频结束时间（秒）
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  media MediaFile @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  user  User      @relation("MediaAnnotationAuthor", fields: [userId], references: [id])
+
+  @@index([mediaId])
+  @@index([userId])
+  @@index([annotationType])
+  @@map("media_annotations")
 }
