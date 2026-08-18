@@ -5,6 +5,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { WsAdapter } from '@nestjs/platform-ws';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -12,10 +13,18 @@ async function bootstrap() {
   // ✅ 关键：启用原生 WebSocket 适配器
   // 这样 @WebSocketGateway 将使用 'ws' 库而不是 'socket.io'
   app.useWebSocketAdapter(new WsAdapter(app));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      transform: true,
+      transformOptions: { enableImplicitConversion: true },
+      whitelist: true,
+    }),
+  );
   // 如果需要跨域
   app.enableCors({
     origin: '*', // 生产环境请替换为你的前端域名
-    methods: ['GET', 'POST'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   });
   const swaggerOptions = new DocumentBuilder()
     .setTitle('协同文档接口文档')
