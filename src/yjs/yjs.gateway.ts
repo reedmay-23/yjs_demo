@@ -29,6 +29,9 @@ const messageSync = 0;
 const messageAwareness = 1;
 // 在线用户推送需要前端通过 ?presence=1 主动开启，避免旧客户端收到不认识的消息类型。
 const messagePresence = 2;
+// 附加房间名：允许在同一篇文档上隔离出多个互不干扰的 Yjs 房间（如 gomoku）。
+// 默认房间仍使用纯数字 docId，保持与既有客户端兼容。
+const ROOM_KEY_PATTERN = /^[a-zA-Z0-9_-]{1,32}$/;
 
 type RoomSocket = WebSocket & {
   presenceSubscribed?: boolean;
@@ -46,6 +49,11 @@ interface RoomData {
   // 房间内唯一的服务端 Y.Doc，所有客户端 update 都会先合并到这里。
   doc: Y.Doc;
   docId: string;
+  // 内存房间键：主房间等于 docId，附加房间（如五子棋）为 `${docId}:${room}`。
+  roomKey: string;
+  // 是否把该房间的 Y.Doc 快照写回 documents.content。只有主文档房间会持久化，
+  // 附加房间（五子棋等）仅保存在内存中，避免覆盖文档正文快照。
+  persisted: boolean;
   lastModifiedBy?: string;
   lastPersistedVersion?: number;
   persistTimer?: NodeJS.Timeout;
@@ -97,8 +105,36 @@ export class YjsCollabGateway
     return this.storageService.normalizeId(docId).toString();
   }
 
+  private findRoomKeysByBaseDocId(baseKey: string) {
+    const keys: string[] = [];
+    this.rooms.forEach((room, key) => {
+      if (room.docId === baseKey) {
+        keys.push(key);
+      }
+    });
+    return keys;
+  }
+
+  private parseRoomName(value: string | null) {
+    if (!value) {
+      return undefined;
+    }
+
+    const roomName = value.trim();
+
+    if (!ROOM_KEY_PATTERN.test(roomName)) {
+      throw new Error(`Invalid room name: ${value}`);
+    }
+
+    return roomName;
+  }
+
   private getCloseReason(error: unknown) {
     if (error instanceof Error) {
+      if (error.message.includes('Invalid room name')) {
+        return 'invalid_room';
+      }
+
       if (
         error.message.includes('missing_access_token') ||
         error.message.includes('jwt expired') ||
@@ -112,8 +148,18 @@ export class YjsCollabGateway
         return 'forbidden';
       }
 
-      if (error.message.includes('does not exist')) {
+      if (
+        error.message.includes('does not exist') ||
+        error.message.includes('Document not found')
+      ) {
         return 'document_not_found';
+      }
+
+      if (
+        error.message.includes('No permission') ||
+        error.message.includes('viewer role is read-only')
+      ) {
+        return 'forbidden';
       }
 
       if (error.message.includes('Invalid numeric id')) {
@@ -181,6 +227,10 @@ export class YjsCollabGateway
   }
 
   private schedulePersist(room: RoomData) {
+    // 附加房间不落库，跳过持久化调度。
+    if (!room.persisted) {
+      return;
+    }
     // Yjs 每次输入都可能产生 update，不能每个 update 都直接写数据库。
     // 这里用 1 秒防抖，把一段连续编辑合并成一次完整快照保存。
     if (room.persistTimer) {
@@ -201,6 +251,11 @@ export class YjsCollabGateway
     if (room.persistTimer) {
       clearTimeout(room.persistTimer);
       room.persistTimer = undefined;
+    }
+
+    if (!room.persisted) {
+      this.logger.debug(`Skip persisting transient room ${room.roomKey}`);
+      return;
     }
 
     const document = await this.storageService.saveSnapshotByUser(
@@ -279,7 +334,7 @@ export class YjsCollabGateway
     // 非数据库恢复来源的 update 需要广播给同房间其他客户端，并安排持久化。
     room.doc.on('update', (update, origin) => {
       const originSocket = origin as RoomSocket | undefined;
-      if (originSocket?.userId) {
+      if (room.persisted && originSocket?.userId) {
         room.lastModifiedBy = originSocket.userId;
         void this.storageService
           .logDocumentUpdate(room.docId, originSocket.userId, update)
@@ -378,58 +433,90 @@ export class YjsCollabGateway
 
   private handleDocumentRolledBack(event: DocumentRollbackEvent) {
     const docKey = event.documentId.toString();
-    const room = this.rooms.get(docKey);
+    // 同一篇文档可能存在多个内存房间（主文档房间 + 五子棋等附加房间），需要全部失效。
+    const roomKeys = this.findRoomKeysByBaseDocId(docKey);
 
-    if (!room) {
+    if (roomKeys.length === 0) {
       return;
     }
 
-    const clients = Array.from(room.connections.keys()) as RoomSocket[];
-    for (const client of clients) {
-      if (
-        client.readyState === WebSocket.OPEN ||
-        client.readyState === WebSocket.CONNECTING
-      ) {
-        client.close(4409, 'document_rolled_back');
+    for (const roomKey of roomKeys) {
+      const room = this.rooms.get(roomKey);
+      if (!room) {
+        continue;
       }
-    }
 
-    this.discardRoom(
-      docKey,
-      `rolled back to sourceVersion=${event.sourceVersion}, version=${event.version}`,
-    );
+      const clients = Array.from(room.connections.keys()) as RoomSocket[];
+      for (const client of clients) {
+        if (
+          client.readyState === WebSocket.OPEN ||
+          client.readyState === WebSocket.CONNECTING
+        ) {
+          client.close(4409, 'document_rolled_back');
+        }
+      }
+
+      this.discardRoom(
+        roomKey,
+        `rolled back to sourceVersion=${event.sourceVersion}, version=${event.version}`,
+      );
+    }
   }
 
   private handleDocumentAccessChanged(event: DocumentAccessChangedEvent) {
     const docKey = event.documentId.toString();
-    const room = this.rooms.get(docKey);
+    const userId = event.userId.toString();
+    // 权限被回收时，主文档房间和所有附加房间（五子棋等）都要踢掉该用户。
+    const roomKeys = this.findRoomKeysByBaseDocId(docKey);
 
-    if (!room) {
+    if (roomKeys.length === 0) {
       return;
     }
 
-    for (const client of room.connections.keys() as Iterable<RoomSocket>) {
-      if (client.userId !== event.userId.toString()) {
+    for (const roomKey of roomKeys) {
+      const room = this.rooms.get(roomKey);
+      if (!room) {
         continue;
       }
 
-      if (
-        client.readyState === WebSocket.OPEN ||
-        client.readyState === WebSocket.CONNECTING
-      ) {
-        client.close(4403, event.reason);
+      for (const client of room.connections.keys() as Iterable<RoomSocket>) {
+        if (client.userId !== userId) {
+          continue;
+        }
+
+        if (
+          client.readyState === WebSocket.OPEN ||
+          client.readyState === WebSocket.CONNECTING
+        ) {
+          client.close(4403, event.reason);
+        }
       }
     }
   }
 
-  private async getRoom(docId: string, userId: string): Promise<RoomData> {
+  private async getRoom(
+    docId: string,
+    userId: string,
+    roomName?: string,
+  ): Promise<RoomData> {
     const docKey = this.getDocKey(docId);
-    this.logger.log(`Loading room for doc=${docKey}, user=${userId}`);
+    // 主房间沿用纯数字 key；附加房间使用 `${docId}:${room}`，两者 Y.Doc 完全隔离。
+    const roomKey = roomName ? `${docKey}:${roomName}` : docKey;
+    const persisted = !roomName;
+    this.logger.log(
+      `Loading room for doc=${docKey}, room=${roomName ?? 'default'}, user=${userId}`,
+    );
 
-    const existingRoom = this.rooms.get(docKey);
+    // 安全要点：即使房间已经常驻内存，也必须对「本次连接的用户」重新校验权限。
+    // 之前的实现直接返回缓存房间，导致房间被第一个人创建后就绕过了后续所有人的
+    // 权限校验——无权限账号（甚至已被移除的协作者）只要房间还在内存里就能连进来。
+    // 因此这里把校验提到缓存命中之前，缓存只用于复用 Y.Doc 实例，不再充当鉴权捷径。
+    await this.storageService.validateDocumentAccess(docKey, userId, 'write');
+
+    const existingRoom = this.rooms.get(roomKey);
     if (existingRoom) {
       this.logger.log(
-        `Reusing in-memory room for doc=${docKey}, active=${existingRoom.connectionCount}`,
+        `Reusing in-memory room for doc=${docKey}, room=${roomKey}, active=${existingRoom.connectionCount}`,
       );
       return existingRoom;
     }
@@ -441,10 +528,7 @@ export class YjsCollabGateway
       throw new Error(`Document ${docKey} does not exist`);
     }
 
-    // 关键校验：进入协同房间前先确认 token 用户有该文档权限。
-    await this.storageService.validateDocumentAccess(docKey, userId, 'write');
-
-    const cachedRoom = this.rooms.get(docKey);
+    const cachedRoom = this.rooms.get(roomKey);
     if (cachedRoom) {
       return cachedRoom;
     }
@@ -475,11 +559,13 @@ export class YjsCollabGateway
       connections: new Map(),
       doc,
       docId: docKey,
+      roomKey,
+      persisted,
     };
 
     this.attachRoomListeners(room);
-    this.rooms.set(docKey, room);
-    this.logger.log(`Created in-memory room for doc ${docKey}`);
+    this.rooms.set(roomKey, room);
+    this.logger.log(`Created in-memory room for ${roomKey}`);
     return room;
   }
 
@@ -550,9 +636,10 @@ export class YjsCollabGateway
   async handleConnection(client: RoomSocket, req: http.IncomingMessage) {
     const params = urlParamsHandle(req);
     const docId = params.get('docId');
+    const roomName = params.get('room');
 
     this.logger.log(
-      `Incoming websocket connection docId=${docId ?? 'missing'}`,
+      `Incoming websocket connection docId=${docId ?? 'missing'}, room=${roomName ?? 'default'}`,
     );
 
     if (!docId) {
@@ -567,7 +654,9 @@ export class YjsCollabGateway
       // 关键鉴权：协同连接不信任 query.userId，只使用 access token 里的用户身份。
       const payload = await verifyWsAccessToken(this.jwtService, req);
       userId = payload.sub.toString();
-      const room = await this.getRoom(docId, userId);
+      // 房间名校验放在鉴权之后，避免未授权请求探测房间名规则。
+      const parsedRoom = this.parseRoomName(roomName);
+      const room = await this.getRoom(docId, userId, parsedRoom);
       // 会话表只记录“这个用户是否在线”，同一用户多标签页通过引用计数避免重复上下线。
       const presenceChanged = await this.ensureSessionTracked(
         room.docId,
@@ -579,7 +668,8 @@ export class YjsCollabGateway
         room.cleanupTimer = undefined;
       }
 
-      client.roomId = room.docId;
+      // roomId 记录内存房间键（可能带附加房间后缀），用于 disconnect 时精确回收。
+      client.roomId = room.roomKey;
       client.userId = userId;
       // 前端显式带 presence=1 时，才会收到 messagePresence 在线用户推送。
       client.presenceSubscribed = params.get('presence') === '1';
@@ -605,7 +695,7 @@ export class YjsCollabGateway
       }
 
       this.logger.log(
-        `Custom y-websocket protocol established for doc ${room.docId}, active=${room.connectionCount}`,
+        `Custom y-websocket protocol established for ${room.roomKey}, active=${room.connectionCount}`,
       );
     } catch (error) {
       const message =
@@ -623,17 +713,20 @@ export class YjsCollabGateway
   }
 
   async handleDisconnect(client: RoomSocket) {
-    const roomId = client.roomId as string | undefined;
+    const roomKey = client.roomId as string | undefined;
     const userId = client.userId as string | undefined;
 
-    if (!roomId) {
+    if (!roomKey) {
       return;
     }
 
-    const room = this.rooms.get(roomId);
+    const room = this.rooms.get(roomKey);
     if (!room) {
       return;
     }
+
+    // 会话表只认数字文档 id，附加房间也要回落到 room.docId。
+    const docId = room.docId;
 
     this.removeConnectionAwareness(room, client);
     room.connectionCount = Math.max(0, room.connectionCount - 1);
@@ -641,7 +734,7 @@ export class YjsCollabGateway
     if (userId) {
       try {
         const result = await this.storageService.markSessionDisconnected(
-          roomId,
+          docId,
           userId,
         );
         if (result.changed) {
@@ -649,14 +742,14 @@ export class YjsCollabGateway
         }
       } catch (error) {
         this.logger.error(
-          `Failed to update collaboration session for doc ${roomId}`,
+          `Failed to update collaboration session for doc ${docId}`,
           error,
         );
       }
     }
 
     this.logger.log(
-      `Client disconnected from doc ${roomId}, active=${room.connectionCount}`,
+      `Client disconnected from room ${roomKey}, active=${room.connectionCount}`,
     );
 
     if (room.connectionCount > 0) {
@@ -664,16 +757,16 @@ export class YjsCollabGateway
     }
 
     room.cleanupTimer = setTimeout(() => {
-      const currentRoom = this.rooms.get(roomId);
+      const currentRoom = this.rooms.get(roomKey);
       if (!currentRoom || currentRoom.connectionCount > 0) {
         return;
       }
 
-      void this.destroyRoom(roomId);
+      void this.destroyRoom(roomKey);
     }, this.CLEANUP_DELAY_MS);
 
     this.logger.log(
-      `Scheduled cleanup for doc ${roomId} in ${this.CLEANUP_DELAY_MS / 1000}s`,
+      `Scheduled cleanup for room ${roomKey} in ${this.CLEANUP_DELAY_MS / 1000}s`,
     );
   }
 }
