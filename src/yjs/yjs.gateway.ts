@@ -6,7 +6,10 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
+import * as decoding from 'lib0/decoding';
+import * as encoding from 'lib0/encoding';
 import * as http from 'node:http';
+import * as syncProtocol from 'y-protocols/sync';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import * as Y from 'yjs';
 import { Server, WebSocket } from 'ws';
@@ -18,10 +21,6 @@ import {
 import { YjsStorageService } from '../module/yjs-storage/yjs-storage.service';
 import { urlParamsHandle } from '../utils/urlParams';
 import { verifyWsAccessToken } from '../utils/ws-auth';
-
-const syncProtocol = require('y-protocols/dist/sync.cjs');
-const encoding = require('lib0/dist/encoding.cjs');
-const decoding = require('lib0/dist/decoding.cjs');
 
 // y-websocket 协议里的消息类型：0 是文档同步，1 是 awareness 协作状态。
 // 本文件自己扩展了 2，用来推送在线用户列表，不参与 Yjs 文档合并。
@@ -87,13 +86,12 @@ export class YjsCollabGateway
   server: Server;
 
   onModuleInit() {
-    this.removeRollbackListener = this.roomEvents.onDocumentRolledBack((event) =>
-      this.handleDocumentRolledBack(event),
+    this.removeRollbackListener = this.roomEvents.onDocumentRolledBack(
+      (event) => this.handleDocumentRolledBack(event),
     );
-    this.removeAccessChangedListener =
-      this.roomEvents.onDocumentAccessChanged((event) =>
-        this.handleDocumentAccessChanged(event),
-      );
+    this.removeAccessChangedListener = this.roomEvents.onDocumentAccessChanged(
+      (event) => this.handleDocumentAccessChanged(event),
+    );
   }
 
   onModuleDestroy() {
