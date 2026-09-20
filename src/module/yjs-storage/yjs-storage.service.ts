@@ -32,7 +32,10 @@ export type DocumentAccessLevel = 'read' | 'write';
 export class YjsStorageService {
   private static readonly EDIT_HISTORY_MERGE_WINDOW_MS = 5 * 60 * 1000;
   private readonly logger = new Logger(YjsStorageService.name);
-  private readonly activeConnectionRefs = new Map<string, Map<string, number>>();
+  private readonly activeConnectionRefs = new Map<
+    string,
+    Map<string, number>
+  >();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -91,9 +94,7 @@ export class YjsStorageService {
     const documentId = this.normalizeId(id);
     const content = this.encodeState(doc);
     const normalizedUserId =
-      userId === undefined || userId === null
-        ? null
-        : this.normalizeId(userId);
+      userId === undefined || userId === null ? null : this.normalizeId(userId);
 
     this.logger.log(
       `Saving snapshot for doc=${documentId}, bytes=${content.length}`,
@@ -341,8 +342,7 @@ export class YjsStorageService {
         type: 'tiptap',
         field: field?.trim() || 'default',
       },
-      note:
-        'Frontend must recreate Y.Doc instances from these updates and use the same Tiptap extensions/schema to render or diff rich text.',
+      note: 'Frontend must recreate Y.Doc instances from these updates and use the same Tiptap extensions/schema to render or diff rich text.',
     };
   }
 
@@ -353,9 +353,7 @@ export class YjsStorageService {
   ) {
     const documentId = this.normalizeId(docId);
     const normalizedUserId =
-      userId === undefined || userId === null
-        ? null
-        : this.normalizeId(userId);
+      userId === undefined || userId === null ? null : this.normalizeId(userId);
 
     return this.prisma.documentUpdate.create({
       data: {

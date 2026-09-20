@@ -57,7 +57,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
     };
 
     if (process.env.NODE_ENV !== 'production') {
-      data.errorName = exception instanceof Error ? exception.name : typeof exception;
+      data.errorName =
+        exception instanceof Error ? exception.name : typeof exception;
       data.stack = stack;
     }
 
@@ -114,7 +115,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
       return response;
     }
 
-    if (typeof response === 'object' && response !== null && 'message' in response) {
+    if (
+      typeof response === 'object' &&
+      response !== null &&
+      'message' in response
+    ) {
       const message = (response as { message?: string | string[] }).message;
 
       if (Array.isArray(message)) {
@@ -134,7 +139,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
   }
 
   private getErrorCode(response: unknown, status: number): number {
-    if (typeof response === 'object' && response !== null && 'code' in response) {
+    if (
+      typeof response === 'object' &&
+      response !== null &&
+      'code' in response
+    ) {
       const code = (response as { code?: unknown }).code;
       if (typeof code === 'number') {
         return code;
@@ -161,7 +170,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
     return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
-  private getPrismaMessage(error: Prisma.PrismaClientKnownRequestError): string {
+  private getPrismaMessage(
+    error: Prisma.PrismaClientKnownRequestError,
+  ): string {
     switch (error.code) {
       case 'P2002':
         return '数据已存在，请勿重复提交';

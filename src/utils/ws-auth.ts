@@ -15,7 +15,9 @@ export function getWsAccessToken(req: http.IncomingMessage): string | null {
   }
 
   const authorization = req.headers.authorization;
-  const header = Array.isArray(authorization) ? authorization[0] : authorization;
+  const header = Array.isArray(authorization)
+    ? authorization[0]
+    : authorization;
 
   if (!header) {
     return null;

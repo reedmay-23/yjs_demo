@@ -1,5 +1,18 @@
-import { Body, Controller, Delete, Get, Param, Post, Req } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiParam } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Req,
+} from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiOperation,
+  ApiParam,
+} from '@nestjs/swagger';
 import { Request } from 'express';
 import { DocumentService } from './document.service';
 import {
@@ -49,7 +62,10 @@ export class DocumentController {
       },
     },
   })
-  create(@Req() req: TokenRequest, @Body() createDocumentDto: CreateDocumentDto) {
+  create(
+    @Req() req: TokenRequest,
+    @Body() createDocumentDto: CreateDocumentDto,
+  ) {
     return this.documentService.create(req.user.sub, createDocumentDto);
   }
 
@@ -162,7 +178,10 @@ export class DocumentController {
       },
     },
   })
-  update(@Req() req: TokenRequest, @Body() updateDocumentDto: UpdateDocumentDto) {
+  update(
+    @Req() req: TokenRequest,
+    @Body() updateDocumentDto: UpdateDocumentDto,
+  ) {
     return this.documentService.updateMetadata(req.user.sub, updateDocumentDto);
   }
 

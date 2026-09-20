@@ -48,9 +48,9 @@ describe('YjsStorageService permissions', () => {
       role: 'viewer',
     });
 
-    await expect(service.validateDocumentAccess(10, 2, 'write')).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
+    await expect(
+      service.validateDocumentAccess(10, 2, 'write'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('allows editor collaborators to write', async () => {
@@ -65,9 +65,9 @@ describe('YjsStorageService permissions', () => {
   });
 
   it('rejects yjs-storage create without document id', async () => {
-    await expect(service.createDocument({ createdBy: 1 })).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      service.createDocument({ createdBy: 1 }),
+    ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(prisma.document.create).not.toHaveBeenCalled();
   });

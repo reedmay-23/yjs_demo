@@ -333,10 +333,7 @@ export class DocumentService {
     });
   }
 
-  async compareHistorySnapshot(
-    userId: number,
-    dto: CompareHistorySnapshotDto,
-  ) {
+  async compareHistorySnapshot(userId: number, dto: CompareHistorySnapshotDto) {
     const res = await this.yjsStorageService.getHistoryCompareSnapshot(
       dto.documentId,
       userId,

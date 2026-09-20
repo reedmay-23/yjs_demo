@@ -10,9 +10,10 @@ import { ApiResponse } from '../interfaces/api-response.interface';
 import { isServiceApiResponse } from '../utils/api-response.util';
 
 @Injectable()
-export class ResponseInterceptor<T>
-  implements NestInterceptor<T, ApiResponse<T>>
-{
+export class ResponseInterceptor<T> implements NestInterceptor<
+  T,
+  ApiResponse<T>
+> {
   intercept(
     context: ExecutionContext,
     next: CallHandler,
@@ -21,9 +22,9 @@ export class ResponseInterceptor<T>
       return next.handle() as Observable<ApiResponse<T>>;
     }
 
-    return next.handle().pipe(
-      map((data) => this.formatSuccessResponse(data) as ApiResponse<T>),
-    );
+    return next
+      .handle()
+      .pipe(map((data) => this.formatSuccessResponse(data) as ApiResponse<T>));
   }
 
   private formatSuccessResponse(data: unknown): ApiResponse<unknown> {

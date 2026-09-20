@@ -6,6 +6,7 @@ import {
   WebSocketGateway,
 } from '@nestjs/websockets';
 import * as http from 'node:http';
+import * as yWebsocketUtils from 'y-websocket/bin/utils';
 import * as Y from 'yjs';
 import { WebSocket } from 'ws';
 import {
@@ -17,11 +18,13 @@ import { YjsStorageService } from '../module/yjs-storage/yjs-storage.service';
 import { urlParamsHandle } from '../utils/urlParams';
 import { verifyWsAccessToken } from '../utils/ws-auth';
 
-const yWebsocketUtils = require('y-websocket/bin/utils');
 const setupWSConnection = yWebsocketUtils.setupWSConnection;
 const setPersistence = yWebsocketUtils.setPersistence;
 const getPersistence = yWebsocketUtils.getPersistence;
-const docs = yWebsocketUtils.docs as Map<string, Y.Doc & { conns?: Map<WebSocket, unknown> }>;
+const docs = yWebsocketUtils.docs as Map<
+  string,
+  Y.Doc & { conns?: Map<WebSocket, unknown> }
+>;
 
 type RoomSocket = WebSocket & {
   roomId?: string;
@@ -94,20 +97,21 @@ export class YjsPersistenceGateway
             this.lastModifiedBy.get(docName),
           );
           this.lastModifiedBy.delete(docName);
-          this.logger.log(`Persistence flushed final snapshot for doc=${docName}`);
+          this.logger.log(
+            `Persistence flushed final snapshot for doc=${docName}`,
+          );
         },
       });
     }
   }
 
   onModuleInit() {
-    this.removeRollbackListener = this.roomEvents.onDocumentRolledBack((event) =>
-      this.handleDocumentRolledBack(event),
+    this.removeRollbackListener = this.roomEvents.onDocumentRolledBack(
+      (event) => this.handleDocumentRolledBack(event),
     );
-    this.removeAccessChangedListener =
-      this.roomEvents.onDocumentAccessChanged((event) =>
-        this.handleDocumentAccessChanged(event),
-      );
+    this.removeAccessChangedListener = this.roomEvents.onDocumentAccessChanged(
+      (event) => this.handleDocumentAccessChanged(event),
+    );
   }
 
   onModuleDestroy() {
@@ -131,12 +135,14 @@ export class YjsPersistenceGateway
     const timer = setTimeout(() => {
       this.persistTimers.delete(docName);
       const userId = this.lastModifiedBy.get(docName);
-      void this.storageService.saveSnapshotByUser(docName, doc, userId).catch((error) => {
-        this.logger.error(
-          `Failed to persist y-websocket snapshot for doc=${docName}`,
-          error,
-        );
-      });
+      void this.storageService
+        .saveSnapshotByUser(docName, doc, userId)
+        .catch((error) => {
+          this.logger.error(
+            `Failed to persist y-websocket snapshot for doc=${docName}`,
+            error,
+          );
+        });
     }, this.PERSIST_DEBOUNCE_MS);
 
     this.persistTimers.set(docName, timer);
@@ -240,9 +246,7 @@ export class YjsPersistenceGateway
     const params = urlParamsHandle(req);
     const docId = params.get('docId');
 
-    this.logger.log(
-      `Incoming /collab2 connection docId=${docId ?? 'missing'}`,
-    );
+    this.logger.log(`Incoming /collab2 connection docId=${docId ?? 'missing'}`);
 
     if (!docId) {
       client.close(4000, 'Missing docId parameter');
@@ -272,7 +276,9 @@ export class YjsPersistenceGateway
         gc: true,
       });
 
-      this.logger.log(`Official y-websocket persistence connected doc=${docKey}`);
+      this.logger.log(
+        `Official y-websocket persistence connected doc=${docKey}`,
+      );
     } catch (error) {
       const message =
         error instanceof Error

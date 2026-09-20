@@ -1,5 +1,10 @@
 import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiParam,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Request } from 'express';
 import { createSuccessResponse } from '../../common/utils/api-response.util';
 import { YjsStorageService } from './yjs-storage.service';
@@ -28,7 +33,10 @@ export class YjsStorageController {
   @Get('/sessions/:docId')
   @ApiOperation({ summary: '查询文档在线协同用户' })
   @ApiParam({ name: 'docId', type: Number, description: '文档ID', example: 1 })
-  async getActiveSessions(@Req() req: TokenRequest, @Param('docId') docId: string) {
+  async getActiveSessions(
+    @Req() req: TokenRequest,
+    @Param('docId') docId: string,
+  ) {
     const res = await this.yjsService.getActiveSessions(docId, req.user.sub);
 
     return createSuccessResponse(res, {

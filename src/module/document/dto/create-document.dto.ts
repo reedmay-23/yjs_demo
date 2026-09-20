@@ -39,6 +39,8 @@ export class CreateDocumentDto {
     default: 'active',
   })
   @IsOptional()
-  @IsIn(['active', 'archived'], { message: 'status must be active or archived' })
+  @IsIn(['active', 'archived'], {
+    message: 'status must be active or archived',
+  })
   status?: 'active' | 'archived';
 }
