@@ -71,7 +71,9 @@ export class YjsCollabGateway
 {
   private readonly logger = new Logger(YjsCollabGateway.name);
   private readonly rooms = new Map<string, RoomData>();
+  // 销毁房间的时间戳
   private readonly CLEANUP_DELAY_MS = 30 * 60 * 1000;
+  // 防抖时间戳 （异步合并）
   private readonly PERSIST_DEBOUNCE_MS = 1000;
   private removeAccessChangedListener?: () => void;
   private removeRollbackListener?: () => void;
